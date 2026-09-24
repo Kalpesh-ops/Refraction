@@ -1,5 +1,5 @@
 import { get, onValue, ref, set, update } from 'firebase/database';
-import { firebaseClient, firebaseEnabled } from '../firebase';
+import { firebaseClient, firebaseEnabled, serverNow } from '../firebase';
 import { PLAYER_COLORS, createSnapshot } from '../game/engine';
 import type { InputIntent, Player, Room } from '../types';
 
@@ -103,7 +103,19 @@ export async function joinRoom(roomCode: string, name: string) {
   }
 }
 
-export async function startRoom(room: Room) { if (Object.keys(room.players).length < 2) throw new Error('Refraction needs at least two players.'); const snapshot = createSnapshot(room.players, Date.now()); const client = await firebaseClient(); if (client) await update(ref(client.db, `rooms/${room.code}`), { status: 'playing', snapshot }); else { room.status = 'playing'; room.snapshot = snapshot; memory.set(room.code, room); } }
+export async function startRoom(room: Room) {
+  if (Object.keys(room.players).length < 2) throw new Error('Refraction needs at least two players.');
+  const snapshot = createSnapshot(room.players, serverNow());
+  const client = await firebaseClient();
+  if (client) {
+    await update(ref(client.db, `rooms/${room.code}`), { status: 'playing', snapshot, inputs: null });
+  } else {
+    room.status = 'playing';
+    room.snapshot = snapshot;
+    delete room.inputs;
+    memory.set(room.code, room);
+  }
+}
 export async function sendInput(roomCode: string, uid: string, input: InputIntent) { const client = await firebaseClient(); if (client) await set(ref(client.db, `rooms/${roomCode}/inputs/${uid}`), input); else { const room = memory.get(roomCode); if (room) room.inputs = { ...room.inputs, [uid]: input }; } }
 
 export async function writeSnapshot(roomCode: string, snapshot: Room['snapshot'], status?: Room['status']) {

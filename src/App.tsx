@@ -1,26 +1,78 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GameBoard } from './game/GameBoard';
 import { tick, winnerId } from './game/engine';
+import { serverNow } from './firebase';
 import { createRoom, joinRoom, sendInput, startRoom, watchRoom, writeSnapshot } from './services/rooms';
 import type { InputIntent, Room } from './types';
 import './styles.css';
 
 const initialInput: InputIntent = { x: 0, y: 0, dash: false, updatedAt: 0 };
-const formatTime = (end?: number) => Math.max(0, Math.ceil(((end ?? Date.now()) - Date.now()) / 1000)).toString().padStart(2, '0');
+const formatTime = (end?: number) => Math.max(0, Math.ceil(((end ?? serverNow()) - serverNow()) / 1000)).toString().padStart(2, '0');
 
 export default function App() {
   const params = new URLSearchParams(location.search); const inviteRoom = params.get('room')?.toUpperCase() ?? '';
-  const [name, setName] = useState(''); const [roomCode, setRoomCode] = useState(inviteRoom); const [uid, setUid] = useState(''); const [room, setRoom] = useState<Room | null>(null); const [error, setError] = useState(''); const [now, setNow] = useState(Date.now()); const input = useRef<InputIntent>(initialInput);
+  const [name, setName] = useState(''); const [roomCode, setRoomCode] = useState(inviteRoom); const [uid, setUid] = useState(''); const [room, setRoom] = useState<Room | null>(null); const [error, setError] = useState(''); const [now, setNow] = useState(serverNow()); const input = useRef<InputIntent>(initialInput);
+  const roomRef = useRef<Room | null>(null);
+  useEffect(() => { roomRef.current = room; }, [room]);
+
   const join = async (create = false) => { try { setError(''); if (name.trim().length < 2) throw new Error('Choose a name with at least two characters.'); const session = create ? await createRoom(name.trim()) : await joinRoom(roomCode.trim(), name.trim()); setUid(session.uid); setRoomCode(session.roomCode); history.replaceState(null, '', `?room=${session.roomCode}`); } catch (e) { setError(e instanceof Error ? e.message : 'Unable to enter that room.'); } };
   useEffect(() => { if (!roomCode || !uid) return; return watchRoom(roomCode, setRoom); }, [roomCode, uid]);
-  useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
+  useEffect(() => { const t = window.setInterval(() => setNow(serverNow()), 500); return () => clearInterval(t); }, []);
   useEffect(() => {
     const handleDown = (event: KeyboardEvent) => { if (event.code === 'Space') input.current = { ...input.current, dash: true, updatedAt: Date.now() }; const map: Record<string,[number,number]> = { ArrowUp:[0,-1], KeyW:[0,-1], ArrowDown:[0,1], KeyS:[0,1], ArrowLeft:[-1,0], KeyA:[-1,0], ArrowRight:[1,0], KeyD:[1,0] }; const value = map[event.code]; if (value) input.current = { ...input.current, x:value[0], y:value[1], updatedAt:Date.now() }; };
     const handleUp = (event: KeyboardEvent) => { if (event.code === 'Space') input.current = { ...input.current, dash:false, updatedAt:Date.now() }; if (['ArrowUp','KeyW','ArrowDown','KeyS','ArrowLeft','KeyA','ArrowRight','KeyD'].includes(event.code)) input.current = { ...input.current,x:0,y:0,updatedAt:Date.now() }; };
     addEventListener('keydown',handleDown); addEventListener('keyup',handleUp); return () => { removeEventListener('keydown',handleDown); removeEventListener('keyup',handleUp); };
   }, []);
-  useEffect(() => { if (!room || room.status !== 'playing' || !uid) return; const interval = window.setInterval(() => sendInput(room.code, uid, input.current), 55); return () => clearInterval(interval); }, [room, uid]);
-  useEffect(() => { if (!room?.snapshot || room.status !== 'playing' || room.hostUid !== uid) return; const interval = window.setInterval(() => { const next = tick(room.snapshot!, room.inputs ?? {}, Date.now(), .05); writeSnapshot(room.code, next, Date.now() >= next.endsAt ? 'results' : undefined); }, 50); return () => clearInterval(interval); }, [room, uid]);
+  useEffect(() => {
+    if (room?.status !== 'playing' || !room?.code || !uid) return;
+    const code = room.code;
+    let lastSent: InputIntent | null = null;
+    let lastSentAt = 0;
+
+    const interval = window.setInterval(() => {
+      const current = input.current;
+      const currentTime = Date.now();
+      const changed = !lastSent ||
+        current.x !== lastSent.x ||
+        current.y !== lastSent.y ||
+        current.dash !== lastSent.dash;
+      const heartbeat = currentTime - lastSentAt >= 1000;
+
+      if (changed || heartbeat) {
+        lastSent = { ...current };
+        lastSentAt = currentTime;
+        sendInput(code, uid, current).catch(console.error);
+      }
+    }, 60);
+
+    return () => clearInterval(interval);
+  }, [room?.status, room?.code, uid]);
+  useEffect(() => {
+    if (room?.status !== 'playing' || room?.hostUid !== uid || !room?.code || !roomRef.current?.snapshot) return;
+    const code = room.code;
+    let state = roomRef.current!.snapshot!;
+    let last = serverNow();
+    let writing = false;
+
+    const interval = window.setInterval(() => {
+      const now = serverNow();
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      state = tick(state, roomRef.current?.inputs ?? {}, now, dt);
+      const done = now >= state.endsAt;
+      if (!writing) {
+        writing = true;
+        writeSnapshot(code, state, done ? 'results' : undefined)
+          .catch(console.error)
+          .finally(() => {
+            writing = false;
+          });
+      }
+      if (done) clearInterval(interval);
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [room?.status, room?.code, room?.hostUid, uid]);
   const move = useCallback((x: number, y: number) => { input.current = { ...input.current, x, y, updatedAt: Date.now() }; }, []);
   const dash = useCallback(() => { input.current = { ...input.current, dash: true, updatedAt: Date.now() }; setTimeout(() => input.current = { ...input.current, dash: false, updatedAt: Date.now() }, 120); }, []);
   const ordered = useMemo(() => room?.snapshot ? Object.values(room.snapshot.runners).sort((a,b) => b.score-a.score) : [], [room?.snapshot]);
