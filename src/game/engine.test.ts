@@ -76,4 +76,109 @@ describe('Refraction engine', () => {
     expect(state.runners.a.x).toBeGreaterThanOrEqual(382);
     expect(state.runners.a.x).toBeLessThanOrEqual(578);
   });
+  it('blocks relic pickup when runner echo is not on a plate', () => {
+    const state = createSnapshot(players, 10000);
+    const runner = state.runners.a;
+    const relic = state.relics['relic-0'];
+    runner.x = relic.x;
+    runner.y = relic.y;
+    runner.trail = [{ x: 116, y: 110, at: 10000 - ARENA.delayMs }];
+
+    const next = tick(state, {}, 10000, 0.05);
+
+    expect(next.runners.a.carrying).toBe(false);
+    expect(next.relics['relic-0'].active).toBe(true);
+    expect('carrierId' in next.relics['relic-0']).toBe(false);
+  });
+  it('allows relic pickup when runner echo from 5+ seconds ago is on plate center (480, 310)', () => {
+    const state = createSnapshot(players, 10000);
+    const runner = state.runners.a;
+    const relic = state.relics['relic-0'];
+    runner.x = relic.x;
+    runner.y = relic.y;
+    runner.trail = [{ x: 480, y: 310, at: 10000 - ARENA.delayMs }];
+
+    const next = tick(state, {}, 10000, 0.05);
+
+    expect(next.runners.a.carrying).toBe(true);
+    expect(next.relics['relic-0'].active).toBe(false);
+    expect(next.relics['relic-0'].carrierId).toBe('a');
+  });
+  it('drops rival relic and resets rival carrying when dashed within 88px', () => {
+    const now = 2000;
+    const state = createSnapshot(players, now);
+    state.runners.a.x = 200;
+    state.runners.a.y = 200;
+    state.runners.a.dashReadyAt = now;
+
+    state.runners.b.x = 230;
+    state.runners.b.y = 200;
+    state.runners.b.carrying = true;
+
+    const relic = state.relics['relic-0'];
+    relic.active = false;
+    relic.carrierId = 'b';
+    relic.x = 230;
+    relic.y = 200;
+
+    const next = tick(state, { a: { x: 0, y: 0, dash: true, updatedAt: now } }, now, 0.05);
+
+    expect(next.runners.b.carrying).toBe(false);
+    expect(next.relics['relic-0'].active).toBe(true);
+    expect('carrierId' in next.relics['relic-0']).toBe(false);
+    expect(next.relics['relic-0'].x).toBe(230);
+    expect(next.relics['relic-0'].y).toBe(200);
+    expect(next.runners.a.dashReadyAt).toBe(now + 1700);
+  });
+  it('prevents dash during cooldown 100ms after a dash', () => {
+    const now = 2000;
+    const state = createSnapshot(players, now);
+    state.runners.a.dashReadyAt = now;
+    state.runners.b.x = state.runners.a.x + 30;
+    state.runners.b.y = state.runners.a.y;
+    state.runners.b.carrying = true;
+
+    const relic = state.relics['relic-0'];
+    relic.active = false;
+    relic.carrierId = 'b';
+    relic.x = state.runners.b.x;
+    relic.y = state.runners.b.y;
+
+    const afterFirstDash = tick(state, { a: { x: 0, y: 0, dash: true, updatedAt: now } }, now, 0.05);
+    expect(afterFirstDash.runners.a.dashReadyAt).toBe(now + 1700);
+
+    afterFirstDash.runners.b.carrying = true;
+    afterFirstDash.relics['relic-1'].active = false;
+    afterFirstDash.relics['relic-1'].carrierId = 'b';
+    const bPosBeforeSecondDash = { x: afterFirstDash.runners.b.x, y: afterFirstDash.runners.b.y };
+
+    const afterSecondDash = tick(afterFirstDash, { a: { x: 0, y: 0, dash: true, updatedAt: now + 100 } }, now + 100, 0.05);
+
+    expect(afterSecondDash.runners.a.dashReadyAt).toBe(now + 1700);
+    expect(afterSecondDash.runners.b.carrying).toBe(true);
+    expect(afterSecondDash.relics['relic-1'].active).toBe(false);
+    expect(afterSecondDash.runners.b.x).toBe(bPosBeforeSecondDash.x);
+    expect(afterSecondDash.runners.b.y).toBe(bPosBeforeSecondDash.y);
+  });
+  it('returns winnerId and does not move runners when now >= endsAt', () => {
+    const state = createSnapshot(players, 1000);
+    const startX = state.runners.a.x;
+    const startY = state.runners.a.y;
+
+    const finished = tick(state, { a: { x: 1, y: 1, dash: false, updatedAt: state.endsAt } }, state.endsAt, 0.05);
+
+    expect(finished.winnerId).toBeDefined();
+    expect(finished.runners.a.x).toBe(startX);
+    expect(finished.runners.a.y).toBe(startY);
+  });
+  it('breaks score ties in favor of the lexicographically smaller id', () => {
+    const state = createSnapshot(players, 1000);
+    state.runners.a.score = 3;
+    state.runners.b.score = 3;
+
+    expect(winnerId(state)).toBe('a');
+
+    const finished = tick(state, {}, state.endsAt + 1, 0.05);
+    expect(finished.winnerId).toBe('a');
+  });
 });
