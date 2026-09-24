@@ -1,10 +1,30 @@
 import type { InputIntent, MatchSnapshot, Player, Relic, Runner } from '../types';
 
 export const ARENA = { width: 960, height: 620, delayMs: 5000, durationMs: 180000 };
+export const RUNNER_RADIUS = 19;
+export const WALLS = [
+  [190, 150, 170, 18],
+  [600, 150, 170, 18],
+  [190, 452, 170, 18],
+  [600, 452, 170, 18],
+  [382, 255, 196, 18],
+  [382, 350, 196, 18],
+];
 export const PLAYER_COLORS = ['#46d5c6', '#ff9166', '#f2d46f', '#e08bff', '#6ca9ff', '#f28ab7'];
 const SPAWNS = [[116, 110], [844, 110], [844, 510], [116, 510], [480, 110], [480, 510]];
 const RELIC_SPAWNS = [[480, 205], [300, 310], [660, 310], [480, 430]];
 const SHRINES = [[90, 310], [870, 310], [480, 80], [480, 540], [210, 150], [750, 470]];
+
+export function hitsWall(x: number, y: number, r: number = RUNNER_RADIUS): boolean {
+  for (const [wx, wy, w, h] of WALLS) {
+    const closestX = clamp(x, wx, wx + w);
+    const closestY = clamp(y, wy, wy + h);
+    if (Math.hypot(x - closestX, y - closestY) < r) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function createSnapshot(players: Record<string, Player>, now: number): MatchSnapshot {
   const runners: Record<string, Runner> = {};
@@ -29,8 +49,14 @@ export function tick(snapshot: MatchSnapshot, inputs: Record<string, InputIntent
     const input = inputs[runner.id] ?? { x: 0, y: 0, dash: false, updatedAt: now };
     const length = Math.hypot(input.x, input.y) || 1;
     const speed = 165 * dt;
-    runner.x = clamp(runner.x + (input.x / length) * speed, 40, ARENA.width - 40);
-    runner.y = clamp(runner.y + (input.y / length) * speed, 40, ARENA.height - 40);
+    const nx = clamp(runner.x + (input.x / length) * speed, 40, ARENA.width - 40);
+    if (!hitsWall(nx, runner.y, RUNNER_RADIUS)) {
+      runner.x = nx;
+    }
+    const ny = clamp(runner.y + (input.y / length) * speed, 40, ARENA.height - 40);
+    if (!hitsWall(runner.x, ny, RUNNER_RADIUS)) {
+      runner.y = ny;
+    }
     const lastPoint = runner.trail[runner.trail.length - 1];
     if (!lastPoint || now - lastPoint.at >= 100) {
       runner.trail.push({ x: Math.round(runner.x), y: Math.round(runner.y), at: now });
@@ -40,8 +66,14 @@ export function tick(snapshot: MatchSnapshot, inputs: Record<string, InputIntent
       runner.dashReadyAt = now + 1700;
       for (const rival of runners) if (rival.id !== runner.id && distance(runner, rival) < 88) {
         if (rival.carrying) dropRelic(next, rival);
-        rival.x = clamp(rival.x + (rival.x - runner.x) * .45, 40, ARENA.width - 40);
-        rival.y = clamp(rival.y + (rival.y - runner.y) * .45, 40, ARENA.height - 40);
+        const rx = clamp(rival.x + (rival.x - runner.x) * .45, 40, ARENA.width - 40);
+        if (!hitsWall(rx, rival.y, RUNNER_RADIUS)) {
+          rival.x = rx;
+        }
+        const ry = clamp(rival.y + (rival.y - runner.y) * .45, 40, ARENA.height - 40);
+        if (!hitsWall(rival.x, ry, RUNNER_RADIUS)) {
+          rival.y = ry;
+        }
       }
     }
     const echo = runner.trail.find(point => point.at >= now - ARENA.delayMs) ?? runner.trail[0];

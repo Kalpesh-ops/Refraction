@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import Phaser from 'phaser';
-import { ARENA, shrineFor } from './engine';
+import { ARENA, shrineFor, WALLS } from './engine';
 import type { MatchSnapshot, Player, ReflectionPoint } from '../types';
 
 function echoOf(trail?: ReflectionPoint[]) {
@@ -24,7 +24,7 @@ class MazeScene extends Phaser.Scene {
     const g = this.add.graphics(); const nodes: Phaser.GameObjects.GameObject[] = [g];
     g.fillStyle(0x0b1821, 1).fillRect(0, 0, ARENA.width, ARENA.height);
     g.lineStyle(3, 0x214656, .9).strokeRect(25, 25, ARENA.width - 50, ARENA.height - 50);
-    [[190, 150, 170, 18], [600, 150, 170, 18], [190, 452, 170, 18], [600, 452, 170, 18], [382, 255, 196, 18], [382, 350, 196, 18]].forEach(([x,y,w,h]) => { g.fillStyle(0x1b3440).fillRoundedRect(x,y,w,h,9); g.lineStyle(1,0x4a7886,.65).strokeRoundedRect(x,y,w,h,9); });
+    WALLS.forEach(([x,y,w,h]) => { g.fillStyle(0x1b3440).fillRoundedRect(x,y,w,h,9); g.lineStyle(1,0x4a7886,.65).strokeRoundedRect(x,y,w,h,9); });
     const plate = echoOf(this.snapshot.runners[this.uid]?.trail);
     const held = plate && (Math.hypot(plate.x - 480, plate.y - 310) < 95 || Math.hypot(plate.x - 480, plate.y - 210) < 45);
     [[480,310,90],[480,210,42]].forEach(([x,y,r]) => { g.lineStyle(2, held ? 0x77ffee : 0x3c7181, held ? .9 : .5).strokeCircle(x,y,r); });

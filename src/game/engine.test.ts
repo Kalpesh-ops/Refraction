@@ -59,4 +59,21 @@ describe('Refraction engine', () => {
     expect(tick1.runners.a.trail.length).toBe(initialTrailLength);
     expect(tick2.runners.a.trail.length).toBe(initialTrailLength + 1);
   });
+  it('prevents a runner moving down from penetrating the wall at (382, 255, 196, 18)', () => {
+    let state = createSnapshot(players, 1000);
+    state.runners.a.x = 480;
+    state.runners.a.y = 230;
+
+    for (let i = 1; i <= 20; i++) {
+      const now = 1000 + i * 50;
+      state = tick(state, { a: { x: 0, y: 1, dash: false, updatedAt: now } }, now, 0.05);
+      expect(state.runners.a.y + 19 > 255).toBe(false);
+      expect(state.runners.a.x).toBeGreaterThanOrEqual(382);
+      expect(state.runners.a.x).toBeLessThanOrEqual(578);
+    }
+
+    expect(state.runners.a.y + 19 > 255).toBe(false);
+    expect(state.runners.a.x).toBeGreaterThanOrEqual(382);
+    expect(state.runners.a.x).toBeLessThanOrEqual(578);
+  });
 });
