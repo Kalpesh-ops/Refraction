@@ -116,6 +116,24 @@ export async function startRoom(room: Room) {
     memory.set(room.code, room);
   }
 }
+
+export async function resetRoom(roomCode: string) {
+  const client = await firebaseClient();
+  if (client) {
+    await update(ref(client.db, `rooms/${roomCode}`), {
+      status: 'lobby',
+      snapshot: null,
+      inputs: null,
+    });
+  } else {
+    const room = memory.get(roomCode);
+    if (room) {
+      room.status = 'lobby';
+      delete room.snapshot;
+      delete room.inputs;
+    }
+  }
+}
 export async function sendInput(roomCode: string, uid: string, input: InputIntent) { const client = await firebaseClient(); if (client) await set(ref(client.db, `rooms/${roomCode}/inputs/${uid}`), input); else { const room = memory.get(roomCode); if (room) room.inputs = { ...room.inputs, [uid]: input }; } }
 
 export async function writeSnapshot(roomCode: string, snapshot: Room['snapshot'], status?: Room['status']) {
