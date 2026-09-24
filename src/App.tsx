@@ -19,9 +19,72 @@ export default function App() {
   useEffect(() => { if (!roomCode || !uid) return; return watchRoom(roomCode, setRoom); }, [roomCode, uid]);
   useEffect(() => { const t = window.setInterval(() => setNow(serverNow()), 500); return () => clearInterval(t); }, []);
   useEffect(() => {
-    const handleDown = (event: KeyboardEvent) => { if (event.code === 'Space') input.current = { ...input.current, dash: true, updatedAt: Date.now() }; const map: Record<string,[number,number]> = { ArrowUp:[0,-1], KeyW:[0,-1], ArrowDown:[0,1], KeyS:[0,1], ArrowLeft:[-1,0], KeyA:[-1,0], ArrowRight:[1,0], KeyD:[1,0] }; const value = map[event.code]; if (value) input.current = { ...input.current, x:value[0], y:value[1], updatedAt:Date.now() }; };
-    const handleUp = (event: KeyboardEvent) => { if (event.code === 'Space') input.current = { ...input.current, dash:false, updatedAt:Date.now() }; if (['ArrowUp','KeyW','ArrowDown','KeyS','ArrowLeft','KeyA','ArrowRight','KeyD'].includes(event.code)) input.current = { ...input.current,x:0,y:0,updatedAt:Date.now() }; };
-    addEventListener('keydown',handleDown); addEventListener('keyup',handleUp); return () => { removeEventListener('keydown',handleDown); removeEventListener('keyup',handleUp); };
+    const pressed = new Set<string>();
+
+    const updateMovement = () => {
+      const right = pressed.has('ArrowRight') || pressed.has('KeyD');
+      const left = pressed.has('ArrowLeft') || pressed.has('KeyA');
+      const down = pressed.has('ArrowDown') || pressed.has('KeyS');
+      const up = pressed.has('ArrowUp') || pressed.has('KeyW');
+      const x = (right ? 1 : 0) - (left ? 1 : 0);
+      const y = (down ? 1 : 0) - (up ? 1 : 0);
+      input.current = { ...input.current, x, y, updatedAt: Date.now() };
+    };
+
+    const handleDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        return;
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+        event.preventDefault();
+      }
+
+      if (event.code === 'Space') {
+        input.current = { ...input.current, dash: true, updatedAt: Date.now() };
+      }
+
+      if (['ArrowUp', 'KeyW', 'ArrowDown', 'KeyS', 'ArrowLeft', 'KeyA', 'ArrowRight', 'KeyD'].includes(event.code)) {
+        pressed.add(event.code);
+        updateMovement();
+      }
+    };
+
+    const handleUp = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        return;
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+        event.preventDefault();
+      }
+
+      if (event.code === 'Space') {
+        input.current = { ...input.current, dash: false, updatedAt: Date.now() };
+      }
+
+      if (['ArrowUp', 'KeyW', 'ArrowDown', 'KeyS', 'ArrowLeft', 'KeyA', 'ArrowRight', 'KeyD'].includes(event.code)) {
+        pressed.delete(event.code);
+        updateMovement();
+      }
+    };
+
+    const handleBlur = () => {
+      pressed.clear();
+      input.current = { ...input.current, x: 0, y: 0, dash: false, updatedAt: Date.now() };
+    };
+
+    window.addEventListener('keydown', handleDown);
+    window.addEventListener('keyup', handleUp);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleDown);
+      window.removeEventListener('keyup', handleUp);
+      window.removeEventListener('blur', handleBlur);
+    };
   }, []);
   useEffect(() => {
     if (room?.status !== 'playing' || !room?.code || !uid) return;
@@ -80,5 +143,5 @@ export default function App() {
   if (!room) return <main className="welcome"><p className="loading">Finding the mirror maze...</p></main>;
   if (room.status === 'lobby') return <main className="lobby"><header><div><p className="eyebrow">Room code</p><h1>{room.code}</h1></div><button className="quiet" onClick={()=>navigator.clipboard.writeText(location.href)}>Copy invite link</button></header><section className="lobby-center"><p className="eyebrow">The maze is waiting</p><h2>{Object.keys(room.players).length} / 6 runners arrived</h2><div className="player-list">{Object.values(room.players).map(player=><div key={player.id}><i style={{background:player.color}} />{player.name}{player.id===room.hostUid && <small>Host</small>}</div>)}</div>{room.hostUid === uid ? <button disabled={Object.keys(room.players).length<2} onClick={()=>startRoom(room).catch(e=>setError(e.message))}>Begin Refraction</button> : <p className="waiting">Waiting for the host to begin.</p>}{error && <p className="error">{error}</p>}<aside><strong>How to win</strong><span>Time your echo onto a glowing plate. Take a relic while the plate is held, then bring it to your outlined shrine. Dash makes rivals drop relics.</span></aside></section></main>;
   if (room.status === 'results' && room.snapshot) { const victor = winnerId(room.snapshot); return <main className="results"><p className="eyebrow">The mirror settles</p><h1>{room.players[victor]?.name ?? 'A runner'} wins</h1><div className="result-list">{ordered.map((runner,index)=><div key={runner.id}><b>0{index+1}</b><span>{room.players[runner.id]?.name}</span><strong>{runner.score} relic{runner.score===1?'':'s'}</strong></div>)}</div>{room.hostUid===uid ? <button onClick={()=>startRoom({...room,status:'lobby'}).catch(e=>setError(e.message))}>Play again</button> : <p className="waiting">The host can start another round.</p>}</main>; }
-  return <main className="game"><header className="hud"><div><p className="eyebrow">Room {room.code}</p><strong>Refraction</strong></div><div className="timer">{formatTime(room.snapshot?.endsAt)}<small>remaining</small></div><div className="scoreline">{ordered.slice(0,3).map(r=><span key={r.id}><i style={{background:room.players[r.id]?.color}} />{r.score}</span>)}</div></header><GameBoard snapshot={room.snapshot} players={room.players} uid={uid}/><section className="mobile-controls"><div className="dpad"><button onPointerDown={()=>move(0,-1)} onPointerUp={()=>move(0,0)}>▲</button><button onPointerDown={()=>move(-1,0)} onPointerUp={()=>move(0,0)}>◀</button><button onPointerDown={()=>move(1,0)} onPointerUp={()=>move(0,0)}>▶</button><button onPointerDown={()=>move(0,1)} onPointerUp={()=>move(0,0)}>▼</button></div><button className="dash" onPointerDown={dash}>Dash</button></section><p className="controls">Move: WASD / arrows · Dash: space · Your pale echo holds sigil plates five seconds behind you.</p></main>;
+  return <main className="game"><header className="hud"><div><p className="eyebrow">Room {room.code}</p><strong>Refraction</strong></div><div className="timer">{formatTime(room.snapshot?.endsAt)}<small>remaining</small></div><div className="scoreline">{ordered.slice(0,3).map(r=><span key={r.id}><i style={{background:room.players[r.id]?.color}} />{r.score}</span>)}</div></header><GameBoard snapshot={room.snapshot} players={room.players} uid={uid}/><section className="mobile-controls" onContextMenu={e => e.preventDefault()}><div className="dpad"><button onPointerDown={()=>move(0,-1)} onPointerUp={()=>move(0,0)} onPointerCancel={()=>move(0,0)} onPointerLeave={()=>move(0,0)}>▲</button><button onPointerDown={()=>move(-1,0)} onPointerUp={()=>move(0,0)} onPointerCancel={()=>move(0,0)} onPointerLeave={()=>move(0,0)}>◀</button><button onPointerDown={()=>move(1,0)} onPointerUp={()=>move(0,0)} onPointerCancel={()=>move(0,0)} onPointerLeave={()=>move(0,0)}>▶</button><button onPointerDown={()=>move(0,1)} onPointerUp={()=>move(0,0)} onPointerCancel={()=>move(0,0)} onPointerLeave={()=>move(0,0)}>▼</button></div><button className="dash" onPointerDown={dash}>Dash</button></section><p className="controls">Move: WASD / arrows · Dash: space · Your pale echo holds sigil plates five seconds behind you.</p></main>;
 }
