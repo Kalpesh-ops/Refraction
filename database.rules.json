@@ -6,12 +6,12 @@
         ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || (data.exists() && data.child('hostUid').val() === auth.uid))",
         "players": {
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid"
+            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child(\"hostUid\").exists()"
           }
         },
         "inputs": {
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid"
+            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child(\"hostUid\").exists()"
           }
         },
         "snapshot": {
