@@ -28,7 +28,7 @@ class MazeScene extends Phaser.Scene {
       const body = this.add.circle(runner.x, runner.y, 19, Phaser.Display.Color.HexStringToColor(player?.color ?? '#ffffff').color, 1); body.setStrokeStyle(runner.id === this.uid ? 4 : 2, 0xe7fffa, runner.id === this.uid ? 1 : .55); nodes.push(body);
       if (runner.carrying) { const sigil = this.add.circle(runner.x, runner.y - 31, 7, 0xd7f4ea, 1); sigil.setStrokeStyle(2,0x4ed9c5,1); nodes.push(sigil); }
       const label = this.add.text(runner.x, runner.y + 27, player?.name ?? 'Runner', { fontFamily: 'system-ui', fontSize: '14px', color: '#e5fbf5' }).setOrigin(.5,0); nodes.push(label);
-      const [sx,sy] = shrineFor(runner.id); g.lineStyle(2, Phaser.Display.Color.HexStringToColor(player?.color ?? '#ffffff').color,.45).strokeCircle(sx,sy,34);
+      const [sx,sy] = shrineFor(runner); g.lineStyle(2, Phaser.Display.Color.HexStringToColor(player?.color ?? '#ffffff').color,.45).strokeCircle(sx,sy,34);
     });
     this.frame = this.add.container(0,0,nodes);
   }
