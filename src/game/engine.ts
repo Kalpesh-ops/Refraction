@@ -13,7 +13,7 @@ export const WALLS = [
 export const PLAYER_COLORS = ['#46d5c6', '#ff9166', '#f2d46f', '#e08bff', '#6ca9ff', '#f28ab7'];
 const SPAWNS = [[116, 110], [844, 110], [844, 510], [116, 510], [480, 110], [480, 510]];
 const RELIC_SPAWNS = [[480, 205], [300, 310], [660, 310], [480, 430]];
-const SHRINES = [[90, 310], [870, 310], [480, 80], [480, 540], [210, 150], [750, 470]];
+const SHRINES = [[90, 310], [870, 310], [480, 80], [480, 540], [210, 230], [750, 390]];
 
 export function hitsWall(x: number, y: number, r: number = RUNNER_RADIUS): boolean {
   for (const [wx, wy, w, h] of WALLS) {
