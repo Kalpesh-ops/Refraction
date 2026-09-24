@@ -105,7 +105,12 @@ function scoreRelic(snapshot: MatchSnapshot, runner: Runner, now: number) {
   if (relic) {
     delete relic.carrierId;
     relic.active = true;
-    const spawn = RELIC_SPAWNS[Math.floor(Math.random() * RELIC_SPAWNS.length)];
+    const activeRelics = Object.values(snapshot.relics).filter(item => item.id !== relic.id && item.active);
+    const freeSpawns = RELIC_SPAWNS.filter(([sx, sy]) =>
+      activeRelics.every(item => distance(item, { x: sx, y: sy }) > 20)
+    );
+    const pool = freeSpawns.length > 0 ? freeSpawns : RELIC_SPAWNS;
+    const spawn = pool[Math.floor(Math.random() * pool.length)];
     relic.x = spawn[0];
     relic.y = spawn[1];
   }

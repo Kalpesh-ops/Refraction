@@ -181,4 +181,30 @@ describe('Refraction engine', () => {
     const finished = tick(state, {}, state.endsAt + 1, 0.05);
     expect(finished.winnerId).toBe('a');
   });
+  it('ensures no two active relics share a position after scoring', () => {
+    for (let i = 0; i < 20; i++) {
+      const state = createSnapshot(players, 1000);
+      const runner = state.runners.a;
+      const relic = state.relics['relic-0'];
+      runner.carrying = true;
+      relic.active = false;
+      relic.carrierId = runner.id;
+      const [sx, sy] = shrineFor(runner);
+      runner.x = sx;
+      runner.y = sy;
+
+      const next = tick(state, {}, 1050, 0.05);
+
+      const activeList = Object.values(next.relics).filter(r => r.active);
+      expect(activeList.length).toBe(4);
+      for (let j = 0; j < activeList.length; j++) {
+        for (let k = j + 1; k < activeList.length; k++) {
+          const r1 = activeList[j];
+          const r2 = activeList[k];
+          expect(r1.x === r2.x && r1.y === r2.y).toBe(false);
+          expect(Math.hypot(r1.x - r2.x, r1.y - r2.y)).toBeGreaterThan(20);
+        }
+      }
+    }
+  });
 });
