@@ -1,10 +1,26 @@
+import type { ArenaState } from './game/host';
+
 export type RoomStatus = 'lobby' | 'playing' | 'results';
 
-export interface InputIntent { x: number; y: number; dash: boolean; updatedAt: number }
-export interface Player { id: string; name: string; color: string; joinedAt: number; connected: boolean }
-export interface ReflectionPoint { x: number; y: number; at: number }
-export interface Runner { id: string; slot: number; x: number; y: number; score: number; carrying: boolean; dashReadyAt: number; trail: ReflectionPoint[] }
-export interface Relic { id: string; x: number; y: number; active: boolean; carrierId?: string }
-export interface MatchSnapshot { startedAt: number; endsAt: number; runners: Record<string, Runner>; relics: Record<string, Relic>; winnerId?: string }
-export interface Room { code: string; hostUid: string; status: RoomStatus; players: Record<string, Player>; inputs?: Record<string, InputIntent>; snapshot?: MatchSnapshot; createdAt: number }
-export interface MatchResult { winnerId: string; scores: Array<{ id: string; name: string; score: number }> }
+export interface Player { id: string; name: string; slot: number; joinedAt: number; connected: boolean }
+export interface Match { round: number; startsAt: number; endsAt: number }
+
+/** Owner-written position sample. `s` is stunned-until (server ms). */
+export interface PosSample { x: number; y: number; a: number; t: number; s: number }
+
+/** A fired bolt. Every client traces the same path from it; the echo re-fires it echoDelayMs later. */
+export interface Shot { o: string; x: number; y: number; a: number; t: number }
+
+/** Reported by the victim. */
+export interface Hit { v: string; by: string; sid: string; echo: boolean; x: number; y: number; t: number }
+
+export interface RoomMeta {
+  code: string;
+  hostUid: string;
+  status: RoomStatus;
+  createdAt: number;
+  players: Record<string, Player>;
+  match?: Match;
+}
+
+export type { ArenaState };

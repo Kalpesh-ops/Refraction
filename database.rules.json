@@ -6,16 +6,23 @@
         ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || (data.exists() && data.child('hostUid').val() === auth.uid))",
         "players": {
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child(\"hostUid\").exists()"
+            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child('hostUid').exists()"
           }
         },
-        "inputs": {
+        "pos": {
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child(\"hostUid\").exists()"
+            ".write": "auth != null && auth.uid === $uid && data.parent().parent().child('hostUid').exists()"
           }
         },
-        "snapshot": {
-          ".write": "auth != null && data.parent().child('hostUid').val() === auth.uid"
+        "shots": {
+          "$id": {
+            ".write": "auth != null && !data.exists() && newData.child('o').val() === auth.uid && data.parent().parent().child('hostUid').exists()"
+          }
+        },
+        "hits": {
+          "$id": {
+            ".write": "auth != null && !data.exists() && newData.child('v').val() === auth.uid && data.parent().parent().child('hostUid').exists()"
+          }
         }
       }
     }

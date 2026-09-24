@@ -24,7 +24,7 @@ let db: Database | undefined;
 let timeOffsetSubscribed = false;
 
 export async function firebaseClient() {
-  if (!firebaseEnabled) return null;
+  if (!firebaseEnabled) throw new Error('Multiplayer is not configured. Add the VITE_FIREBASE_* settings.');
 
   app ??= initializeApp(config);
   auth ??= getAuth(app);
