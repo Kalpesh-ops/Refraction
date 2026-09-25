@@ -1,22 +1,28 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { keeperOf } from './art/palette';
+import { keeperSprite } from './art/sprites';
 import { isMuted, setMuted, sfx, startMusic, stopMusic, unlockAudio } from './audio/sfx';
 import { serverNow } from './firebase';
-import { PLAYER_COLORS, TUNING } from './game/constants';
+import { TUNING } from './game/constants';
 import { GameBoard } from './game/GameBoard';
 import { standings } from './game/host';
+import { LocalSession } from './net/local';
 import { Session } from './net/session';
+import type { GameSession } from './net/types';
+import { Footer, Privacy, Terms } from './ui/Legal';
+import { Controls, Manual } from './ui/Manual';
+import { Brand, PixelArt } from './ui/Pixel';
 import './styles.css';
 
 const NAME_KEY = 'refraction:name';
 const LAST_ROOM_KEY = 'refraction:room';
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } },
-  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage may be blocked */ } },
 };
-const colorFor = (slot: number) => PLAYER_COLORS[slot % PLAYER_COLORS.length];
 const clock = (ms: number) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
-function useSession(session: Session | null) {
+function useSession(session: GameSession | null) {
   const subscribe = useCallback((fn: () => void) => session?.subscribe(fn) ?? (() => {}), [session]);
   return useSyncExternalStore(subscribe, () => session?.version ?? 0);
 }
@@ -26,222 +32,373 @@ function useTicker(ms: number) {
   useEffect(() => { const t = window.setInterval(() => set((n) => n + 1), ms); return () => clearInterval(t); }, [ms]);
 }
 
+function MuteButton() {
+  const [muted, set] = useState(isMuted());
+  return <button type="button" className="btn small quiet" onClick={() => { unlockAudio(); setMuted(!muted); set(!muted); }} aria-pressed={!muted}>{muted ? 'Sound off' : 'Sound on'}</button>;
+}
+
 export default function App() {
+  if (location.pathname === '/terms') return <Terms />;
+  if (location.pathname === '/privacy') return <Privacy />;
+  return <Game />;
+}
+
+function Game() {
   const invite = (new URLSearchParams(location.search).get('room') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
   const [name, setName] = useState(store.get(NAME_KEY));
   const [code, setCode] = useState(invite);
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<GameSession | null>(null);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [muted, setMutedState] = useState(isMuted());
+  const [busy, setBusy] = useState<'' | 'create' | 'join'>('');
   const autoTried = useRef(false);
   useSession(session);
 
-  const enter = useCallback(async (mode: 'create' | 'join', nameArg = name, codeArg = code) => {
-    const clean = nameArg.trim();
-    if (clean.length < 2) { setError('Choose a name with at least two characters.'); return; }
+  const validName = () => {
+    const clean = name.trim();
+    if (clean.length < 2) { setError('Pick a name with at least two letters.'); return null; }
+    return clean;
+  };
+
+  const enter = useCallback(async (mode: 'create' | 'join', nameArg: string, codeArg: string) => {
     unlockAudio();
-    setBusy(true);
+    setBusy(mode);
     setError('');
     try {
-      const s = mode === 'create' ? await Session.create(clean) : await Session.join(codeArg.trim().toUpperCase(), clean);
-      store.set(NAME_KEY, clean);
+      const s = mode === 'create' ? await Session.create(nameArg) : await Session.join(codeArg.trim().toUpperCase(), nameArg);
+      store.set(NAME_KEY, nameArg);
       store.set(LAST_ROOM_KEY, s.code);
       history.replaceState(null, '', `?room=${s.code}`);
       setCode(s.code);
       setSession(s);
       sfx.ui();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to enter that room.');
+      setError(e instanceof Error ? e.message : 'Could not reach that room.');
     } finally {
-      setBusy(false);
+      setBusy('');
     }
-  }, [name, code]);
+  }, []);
 
-  // Refreshing the page drops you straight back into the room you were in.
+  const practice = () => {
+    const clean = name.trim().length >= 2 ? name.trim() : 'Keeper';
+    unlockAudio();
+    setError('');
+    setSession(new LocalSession('practice', clean));
+  };
+
+  // A refresh drops you back into the room you were in.
   useEffect(() => {
     if (autoTried.current) return;
     autoTried.current = true;
-    if (invite && store.get(LAST_ROOM_KEY) === invite && store.get(NAME_KEY).length >= 2) void enter('join', store.get(NAME_KEY), invite);
+    const saved = store.get(NAME_KEY);
+    if (invite && store.get(LAST_ROOM_KEY) === invite && saved.length >= 2) void enter('join', saved, invite);
   }, [enter, invite]);
 
   useEffect(() => () => session?.dispose(), [session]);
 
   const leave = () => {
     void session?.leave();
-    setSession(null);
     stopMusic();
-    store.set(LAST_ROOM_KEY, '');
-    history.replaceState(null, '', location.pathname);
-    setCode('');
+    if (session?.kind === 'online') { store.set(LAST_ROOM_KEY, ''); history.replaceState(null, '', location.pathname); setCode(''); }
+    setSession(null);
   };
 
-  const toggleMute = () => { unlockAudio(); setMuted(!muted); setMutedState(!muted); };
-  const muteButton = <button className="icon-btn" onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? 'Sound off' : 'Sound on'}</button>;
-
-  if (!session) return <Landing name={name} setName={setName} code={code} setCode={setCode} invite={invite} busy={busy} error={error} enter={enter} clearInvite={() => { history.replaceState(null, '', location.pathname); setCode(''); setError(''); }} />;
-  if (session.missing) return <main className="screen center"><h2>This room no longer exists.</h2><button onClick={leave}>Back to start</button></main>;
-  if (!session.meta) return <main className="screen center"><p className="muted">Opening the mirror maze…</p></main>;
-  if (session.status === 'playing') return <Playing session={session} muteButton={muteButton} />;
+  if (!session) {
+    if (busy === 'join' && invite && !error) return <LobbySkeleton />;
+    return (
+      <Landing
+        name={name} setName={setName} code={code} setCode={setCode} invite={invite} busy={busy} error={error}
+        onCreate={() => { const n = validName(); if (n) void enter('create', n, ''); }}
+        onJoin={() => { const n = validName(); if (n) void enter('join', n, code); }}
+        onPractice={practice}
+        clearInvite={() => { history.replaceState(null, '', location.pathname); setCode(''); setError(''); }}
+      />
+    );
+  }
+  if (session.missing) return <Notice title="This room has closed." body="The host may have left, or the link is old." action="Back to the front page" onAction={leave} />;
+  if (!session.meta) return <LobbySkeleton />;
+  if (session.status === 'playing') return <Playing session={session} leave={leave} goOnline={() => { leave(); }} />;
   if (session.status === 'results') return <Results session={session} leave={leave} />;
-  return <Lobby session={session} leave={leave} muteButton={muteButton} />;
+  return <Lobby session={session} leave={leave} />;
 }
 
-function Landing(props: { name: string; setName: (v: string) => void; code: string; setCode: (v: string) => void; invite: string; busy: boolean; error: string; enter: (m: 'create' | 'join') => void; clearInvite: () => void }) {
-  const { name, setName, code, setCode, invite, busy, error, enter, clearInvite } = props;
-  const submit = (e: React.FormEvent) => { e.preventDefault(); enter(code ? 'join' : 'create'); };
+// ---------------- front page ----------------
+
+interface LandingProps {
+  name: string; setName: (v: string) => void; code: string; setCode: (v: string) => void; invite: string;
+  busy: '' | 'create' | 'join'; error: string; onCreate: () => void; onJoin: () => void; onPractice: () => void; clearInvite: () => void;
+}
+
+function Landing({ name, setName, code, setCode, invite, busy, error, onCreate, onJoin, onPractice, clearInvite }: LandingProps) {
+  const joining = code.length > 0;
   return (
-    <main className="landing">
-      <section className="hero">
-        <p className="eyebrow">Live multiplayer · 2–6 players</p>
-        <h1>Refraction</h1>
-        <p className="lede">Fire light through a hall of mirrors. Three seconds later, your echo fires the same shot again.</p>
-        <ul className="pills"><li>2-minute rounds</li><li>Phone + desktop</li><li>No sign-up</li></ul>
+    <div className="paper">
+      <header className="masthead">
+        <Brand />
+        <nav><a href="#manual">How to play</a><button type="button" className="linkish" onClick={onPractice}>Practice</button><a href="/terms">Terms</a><a href="/privacy">Privacy</a></nav>
+      </header>
+      <main className="front">
+        <section className="intro">
+          <p className="kicker">The Lens Works · Floor one · 2 to 6 keepers</p>
+          <h1 className="wordmark">Refraction</h1>
+          <p className="standfirst">A lantern duel in a derelict lighthouse foundry. Throw beams of lamplight off brass mirrors, carry amber lenses back to your beacon, and watch your step: three seconds after every beam, your echo throws it again.</p>
+          <form className="ticket" onSubmit={(e) => { e.preventDefault(); if (joining) onJoin(); else onCreate(); }}>
+            <h2>{invite ? `You are invited to room ${invite}` : 'Enter the Lens Works'}</h2>
+            <label>
+              <span>Your name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="What should others call you?" maxLength={14} autoComplete="nickname" />
+            </label>
+            {!invite && (
+              <label>
+                <span>Room code <em>if a friend sent you one</em></span>
+                <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} placeholder="Five letters" maxLength={5} autoCapitalize="characters" inputMode="text" />
+              </label>
+            )}
+            <div className="actions">
+              <button type="submit" className="btn primary" disabled={Boolean(busy)}>{busy ? 'Opening the doors' : joining ? `Join room ${code}` : 'Light a new room'}</button>
+              {joining && !invite && <button type="button" className="btn" disabled={Boolean(busy)} onClick={onCreate}>New room instead</button>}
+              <button type="button" className="btn quiet" onClick={onPractice}>Practice alone</button>
+            </div>
+            {error && <p className="error" role="alert">{error}</p>}
+            {invite && error.startsWith('Room not found') && <button type="button" className="btn quiet" onClick={clearInvite}>Light a new room instead</button>}
+            <p className="fineprint">No sign-up. Practice runs on your device and teaches you the game in about a minute.</p>
+          </form>
+        </section>
+        <figure className="plate">
+          <DemoArena />
+          <figcaption><b>Plate I.</b> Three practice keepers playing live in your browser. The pale figure trailing each keeper is their echo.</figcaption>
+        </figure>
+      </main>
+      <section id="manual" className="section">
+        <h2 className="section-title">Field manual</h2>
+        <Manual />
+        <h2 className="section-title">Controls</h2>
+        <Controls />
       </section>
-      <form className="card entry" onSubmit={submit}>
-        <h2>{invite ? `Join room ${invite}` : 'Enter the maze'}</h2>
-        <label>Display name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" maxLength={14} autoComplete="nickname" /></label>
-        {!invite && <label>Room code <span className="muted">(leave empty to create)</span><input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} placeholder="ABCDE" maxLength={5} autoCapitalize="characters" /></label>}
-        <div className="row">
-          <button type="submit" disabled={busy}>{busy ? 'Connecting…' : code ? 'Join room' : 'Create a room'}</button>
-          {!invite && code && <button type="button" className="ghost" disabled={busy} onClick={() => enter('create')}>New room</button>}
-        </div>
-        {error && <p className="error">{error}</p>}
-        {invite && error.startsWith('Room not found') && <button type="button" className="ghost" onClick={clearInvite}>Create a new room instead</button>}
-      </form>
-    </main>
+      <Footer />
+    </div>
   );
 }
 
-const HOW_TO = [
-  { title: 'Move', body: 'WASD or arrows. On phones, drag the left side of the screen.' },
-  { title: 'Fire light', body: 'Aim with the mouse, click or Space to fire. On phones, drag the right side and release. Bolts bounce off glowing mirrors; stone absorbs them.' },
-  { title: 'Your echo', body: 'Every shot you fire is fired again 3 seconds later from the same spot. Set traps with your past self, and dodge rivals’ echoes too.' },
-  { title: 'Bank shards', body: 'Grab prism shards (up to 5) and bring them to your own shrine to score. Get hit and you drop everything you carry.' },
-];
+function DemoArena() {
+  const [demo, setDemo] = useState<LocalSession | null>(null);
+  useEffect(() => {
+    const d = new LocalSession('demo');
+    setDemo(d);
+    return () => d.dispose();
+  }, []);
+  return <div className="plate-frame">{demo ? <GameBoard session={demo} label="A live demonstration match" /> : <div className="skeleton fill" />}</div>;
+}
 
-function Lobby({ session, leave, muteButton }: { session: Session; leave: () => void; muteButton: React.ReactNode }) {
+function Notice({ title, body, action, onAction }: { title: string; body: string; action: string; onAction: () => void }) {
+  return (
+    <div className="paper">
+      <header className="masthead"><Brand /></header>
+      <main className="notice"><h1>{title}</h1><p>{body}</p><button className="btn primary" onClick={onAction}>{action}</button></main>
+    </div>
+  );
+}
+
+function LobbySkeleton() {
+  return (
+    <div className="paper" aria-busy="true" aria-label="Opening the room">
+      <header className="masthead"><Brand /></header>
+      <main className="lobby">
+        <div className="lobby-side">
+          <section className="panel"><div className="skeleton line short" /><div className="skeleton block tall" /></section>
+          <section className="panel"><div className="skeleton line" /><div className="skeleton row" /><div className="skeleton row" /><div className="skeleton row" /></section>
+        </div>
+        <section className="panel"><div className="skeleton line" />{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton row tall" />)}</section>
+      </main>
+    </div>
+  );
+}
+
+// ---------------- lobby ----------------
+
+function Lobby({ session, leave }: { session: GameSession; leave: () => void }) {
   const meta = session.meta!;
   const players = Object.values(meta.players).sort((a, b) => a.slot - b.slot);
-  const connected = players.filter((p) => p.connected).length;
+  const present = players.filter((p) => p.connected).length;
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
-  const link = `${location.origin}${location.pathname}?room=${meta.code}`;
+  const link = `${location.origin}/?room=${meta.code}`;
   const copy = async () => {
     try {
-      if (navigator.share && matchMedia('(pointer: coarse)').matches) await navigator.share({ title: 'Refraction', text: `Join my Refraction room ${meta.code}`, url: link });
+      if (navigator.share && matchMedia('(pointer: coarse)').matches) await navigator.share({ title: 'Refraction', text: `Join my Refraction room, code ${meta.code}`, url: link });
       else await navigator.clipboard.writeText(link);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch { window.prompt('Copy this invite link:', link); }
   };
   return (
-    <main className="screen lobby">
-      <header className="topbar">
-        <div><p className="eyebrow">Room code</p><h1 className="code">{meta.code}</h1></div>
-        <div className="row">{muteButton}<button className="ghost" onClick={copy}>{copied ? 'Copied' : 'Invite link'}</button><button className="ghost" onClick={leave}>Leave</button></div>
-      </header>
-      <div className="lobby-grid">
-        <section className="card">
-          <h2>{players.length} / 6 runners</h2>
-          <ul className="roster">
-            {players.map((p) => (
-              <li key={p.id} className={p.connected ? '' : 'offline'}>
-                <i style={{ background: colorFor(p.slot), boxShadow: `0 0 14px ${colorFor(p.slot)}` }} />
-                <span>{p.name}{p.id === session.uid && <em> (you)</em>}</span>
-                {p.id === meta.hostUid && <small>Host</small>}
-                {!p.connected && <small>Away</small>}
-              </li>
-            ))}
-          </ul>
-          {session.isHost
-            ? <button className="big" disabled={connected < 2} onClick={() => { unlockAudio(); session.start().catch((e) => setError(e.message)); }}>{connected < 2 ? 'Waiting for a second player…' : 'Start the round'}</button>
-            : <p className="muted">Waiting for the host to start.</p>}
-          {error && <p className="error">{error}</p>}
-          <p className="muted small">Share the invite link. Anyone with it can join from any device.</p>
+    <div className="paper">
+      <header className="masthead"><Brand /><nav><MuteButton /><button type="button" className="btn small quiet" onClick={leave}>Leave room</button></nav></header>
+      <main className="lobby">
+        <div className="lobby-side">
+          <section className="panel ticket-stub">
+            <p className="kicker">Room code</p>
+            <p className="room-code" aria-label={`Room code ${meta.code.split('').join(' ')}`}>{meta.code}</p>
+            <button type="button" className="btn primary wide" onClick={copy}>{copied ? 'Link copied' : 'Copy invite link'}</button>
+            <p className="fineprint">Send the link to friends. They can join from a phone or a computer, up to six keepers.</p>
+          </section>
+          <section className="panel">
+            <h2>Keepers here <span className="count">{players.length} of 6</span></h2>
+            <ul className="roster">
+              {players.map((p) => (
+                <li key={p.id} className={p.connected ? '' : 'away'}>
+                  <PixelArt sprite={keeperSprite(p.slot)} scale={3} />
+                  <span className="who"><b>{p.name}</b>{p.id === session.uid && ' (you)'}<small>{keeperOf(p.slot).name} lantern</small></span>
+                  {p.id === meta.hostUid && <span className="tag">Host</span>}
+                  {!p.connected && <span className="tag muted">Away</span>}
+                </li>
+              ))}
+              {Array.from({ length: Math.max(0, 2 - players.length) }, (_, i) => <li key={`empty-${i}`} className="empty"><span className="who">Waiting for a keeper</span></li>)}
+            </ul>
+            {session.isHost
+              ? <button type="button" className="btn primary wide" disabled={present < 2} onClick={() => { unlockAudio(); session.start().catch((e: Error) => setError(e.message)); }}>{present < 2 ? 'Needs one more keeper' : 'Light the lamps'}</button>
+              : <p className="fineprint">The host starts the round when everyone is here.</p>}
+            {error && <p className="error" role="alert">{error}</p>}
+          </section>
+        </div>
+        <section className="panel">
+          <h2>Before the lamps are lit</h2>
+          <Manual compact />
+          <Controls />
         </section>
-        <section className="card howto">
-          <h2>How to play</h2>
-          <ol>{HOW_TO.map((h, i) => <li key={h.title}><b>{i + 1}</b><div><strong>{h.title}</strong><p>{h.body}</p></div></li>)}</ol>
-          <p className="muted small">Most shards banked after 2 minutes wins. Carrying shards slows you down, so bank often.</p>
-        </section>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
 
-function Playing({ session, muteButton }: { session: Session; muteButton: React.ReactNode }) {
+// ---------------- in the arena ----------------
+
+const COACH = [
+  { flag: 'moved', text: 'Walk around. WASD or the arrow keys.', touch: 'Walk around. Press and drag on the left half of the screen.' },
+  { flag: 'fired', text: 'Throw a beam. Aim with the mouse and click.', touch: 'Throw a beam. Drag on the right half and let go.' },
+  { flag: 'bounced', text: 'Hit a brass mirror. Beams bounce off glass and stop on stone.', touch: 'Hit a brass mirror. Beams bounce off glass and stop on stone.' },
+  { flag: 'echo', text: 'Fire once more and wait. Three seconds later, your echo throws the same beam.', touch: 'Fire once more and wait. Three seconds later, your echo throws the same beam.' },
+  { flag: 'picked', text: 'Walk over an amber lens to pick it up.', touch: 'Walk over an amber lens to pick it up.' },
+  { flag: 'banked', text: 'Carry it to your beacon, the lamp in your colour. The dots by your feet point the way.', touch: 'Carry it to your beacon, the lamp in your colour. The dots by your feet point the way.' },
+  { flag: 'stunned', text: 'Now the others will fight back. Catch one of them with a beam.', touch: 'Now the others will fight back. Catch one of them with a beam.' },
+];
+
+function Coach({ session, onDone }: { session: GameSession; onDone: () => void }) {
+  const touch = matchMedia('(pointer: coarse)').matches;
+  const index = COACH.findIndex((c) => !session.flags.has(c.flag));
+  const done = index === -1;
+  return (
+    <aside className="coach" aria-live="polite">
+      <div className="coach-pips">{COACH.map((c, i) => <i key={c.flag} className={session.flags.has(c.flag) ? 'on' : i === index ? 'now' : ''} />)}</div>
+      {done ? (
+        <>
+          <p><b>That is the whole game.</b> Light a room and send the link to a friend.</p>
+          <div className="actions"><button className="btn primary small" onClick={onDone}>Light a room</button></div>
+        </>
+      ) : (
+        <p><span className="coach-step">Field note {index + 1} of {COACH.length}</span>{touch ? COACH[index].touch : COACH[index].text}</p>
+      )}
+    </aside>
+  );
+}
+
+function Playing({ session, leave, goOnline }: { session: GameSession; leave: () => void; goOnline: () => void }) {
   useTicker(200);
   const meta = session.meta!;
   const match = session.match;
   const now = serverNow();
   const state = session.state;
-  const participants = Object.keys(state.score).sort((a, b) => (state.score[b] ?? 0) - (state.score[a] ?? 0));
+  const practice = session.kind === 'practice';
+  const participants = Object.keys(state.score).sort((a, b) => (state.score[b] ?? 0) - (state.score[a] ?? 0) || session.slotOf(a) - session.slotOf(b));
   const countdown = match ? Math.ceil((match.startsAt - now) / 1000) : 0;
   const started = match ? now >= match.startsAt : false;
   const remaining = match ? (started ? match.endsAt - now : TUNING.roundMs) : 0;
   const spectating = !(session.uid in state.score);
+  const feed = session.feed.filter((f) => Date.now() - f.t < 6000).slice(0, 4);
 
   useEffect(() => { if (started) startMusic(); }, [started]);
   useEffect(() => () => stopMusic(), []);
 
   return (
     <main className="play">
-      <GameBoard session={session} />
-      <div className="hud">
-        <div className="hud-left"><span className="code-chip">{meta.code}</span>{muteButton}</div>
-        <div className={`timer ${remaining < 15_000 && started ? 'urgent' : ''}`}>{clock(remaining)}</div>
-        <ol className="scores">
+      <header className="hud">
+        <div className="hud-left">
+          {practice ? <span className="hud-label">Practice room</span> : <><span className="hud-label">Time</span><strong className={`hud-clock ${started && remaining < 15_000 ? 'late' : ''}`}>{clock(remaining)}</strong></>}
+        </div>
+        <ol className="hud-board" aria-label="Lenses banked">
           {participants.map((uid) => {
             const p = meta.players[uid];
+            const carry = state.carry[uid] ?? 0;
             return (
               <li key={uid} className={uid === session.uid ? 'me' : ''}>
-                <i style={{ background: colorFor(p?.slot ?? 0) }} />
-                <span className="name">{p?.name ?? '—'}</span>
+                <PixelArt sprite={keeperSprite(p?.slot ?? 0)} scale={1.5} />
+                <span className="name">{uid === session.uid ? 'You' : p?.name}</span>
                 <b>{state.score[uid] ?? 0}</b>
-                {(state.carry[uid] ?? 0) > 0 && <small>+{state.carry[uid]}</small>}
+                {carry > 0 && <span className="carry" title={`Carrying ${carry}`}>+{carry}</span>}
               </li>
             );
           })}
         </ol>
+        <div className="hud-tools"><MuteButton />{practice && <button type="button" className="btn small quiet" onClick={leave}>Leave</button>}</div>
+      </header>
+      <div className="stage">
+        <GameBoard session={session} />
+        {!started && countdown > 0 && <div className="countdown" key={countdown}>{countdown}</div>}
+        {started && match && now - match.startsAt < 800 && <div className="countdown go">Go</div>}
+        {spectating && !practice && <p className="banner">You joined mid-round. You will play in the next one.</p>}
+        <p className="rotate-hint">Turn your phone sideways for a bigger arena.</p>
       </div>
-      {!started && countdown > 0 && <div className="countdown" key={countdown}>{countdown}</div>}
-      {started && now - match!.startsAt < 700 && <div className="countdown go">GO</div>}
-      {spectating && <p className="spectating">Spectating: you'll join next round.</p>}
-      <p className="rotate-hint">Turn your phone sideways for a bigger arena.</p>
+      <footer className="hud-foot">
+        {practice ? <Coach session={session} onDone={goOnline} /> : <span className="hud-help">Bank lenses at your beacon. Beams bounce off brass and stop on stone. Your echo repeats every beam 3 s later.</span>}
+        <ul className="feed" aria-live="polite">
+          {feed.map((f) => <li key={f.id}><i style={{ background: keeperOf(f.slot).cloak }} />{f.text}</li>)}
+        </ul>
+      </footer>
     </main>
   );
 }
 
-function Results({ session, leave }: { session: Session; leave: () => void }) {
+// ---------------- results ----------------
+
+function Results({ session, leave }: { session: GameSession; leave: () => void }) {
   const meta = session.meta!;
   const state = session.state;
-  const uids = Object.keys(state.score);
-  const { ranked, tie } = standings(state, uids);
+  const { ranked, tie } = standings(state, Object.keys(state.score));
   const winner = meta.players[ranked[0]];
   const played = useRef(false);
   useEffect(() => { if (!played.current) { played.current = true; stopMusic(); sfx.end(); } }, []);
+  const title = tie ? 'The flame is shared' : ranked[0] === session.uid ? 'You keep the flame' : `${winner?.name ?? 'A keeper'} keeps the flame`;
   return (
-    <main className="screen center results">
-      <p className="eyebrow">Round over</p>
-      <h1>{tie ? 'A perfect tie' : `${winner?.name ?? 'A runner'} wins`}</h1>
-      <ol className="podium">
-        {ranked.map((uid, i) => {
-          const p = meta.players[uid];
-          return (
-            <li key={uid} style={{ ['--c' as string]: colorFor(p?.slot ?? 0) }}>
-              <b>{i + 1}</b>
-              <span>{p?.name ?? '—'}{uid === session.uid && <em> (you)</em>}</span>
-              <small>{state.stuns[uid] ?? 0} stun{(state.stuns[uid] ?? 0) === 1 ? '' : 's'}</small>
-              <strong>{state.score[uid] ?? 0}</strong>
-            </li>
-          );
-        })}
-      </ol>
-      <div className="row">
-        {session.isHost ? <button className="big" onClick={() => session.backToLobby()}>Play again</button> : <p className="muted">The host can start another round.</p>}
-        <button className="ghost" onClick={leave}>Leave room</button>
-      </div>
-    </main>
+    <div className="paper">
+      <header className="masthead"><Brand /><nav><button type="button" className="btn small quiet" onClick={leave}>Leave room</button></nav></header>
+      <main className="results">
+        <p className="kicker">Round {meta.match?.round ?? 1} · the ledger</p>
+        <div className="results-head">
+          <h1>{title}</h1>
+          {!tie && winner && <PixelArt sprite={keeperSprite(winner.slot)} scale={8} label={`${winner.name}, the winner`} />}
+        </div>
+        <table className="ledger">
+          <thead><tr><th scope="col">Place</th><th scope="col">Keeper</th><th scope="col">Lenses banked</th><th scope="col">Catches</th></tr></thead>
+          <tbody>
+            {ranked.map((uid) => {
+              const p = meta.players[uid];
+              const place = 1 + ranked.filter((o) => (state.score[o] ?? 0) > (state.score[uid] ?? 0)).length;
+              return (
+                <tr key={uid} className={place === 1 && !tie ? 'first' : ''}>
+                  <td>{place}</td>
+                  <td className="who"><PixelArt sprite={keeperSprite(p?.slot ?? 0)} scale={2} /><span>{p?.name}{uid === session.uid && ' (you)'}</span></td>
+                  <td>{state.score[uid] ?? 0}</td>
+                  <td>{state.stuns[uid] ?? 0}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="actions">
+          {session.isHost ? <button className="btn primary" onClick={() => session.backToLobby()}>Back to the lobby</button> : <p className="fineprint">The host can start another round.</p>}
+          <button className="btn quiet" onClick={leave}>Leave room</button>
+        </div>
+      </main>
+    </div>
   );
 }
+

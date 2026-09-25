@@ -1,0 +1,60 @@
+import { MIRROR_ICON, SHARD, STONE_ICON, beaconSprite, ghostSprite, keeperSprite } from '../art/sprites';
+import { PixelArt } from './Pixel';
+
+const STEPS = [
+  {
+    art: <PixelArt sprite={keeperSprite(0)} scale={4} />,
+    title: 'You are a keeper',
+    body: 'Walk with WASD or the arrow keys. On a phone, press and drag anywhere on the left half of the screen.',
+  },
+  {
+    art: <span className="pair"><PixelArt sprite={MIRROR_ICON} scale={4} /><PixelArt sprite={STONE_ICON} scale={4} /></span>,
+    title: 'Throw lamplight',
+    body: 'Aim with the mouse and click, or press Space. On a phone, drag on the right half and let go. Beams bounce off brass mirrors and stop dead on stone.',
+  },
+  {
+    art: <PixelArt sprite={ghostSprite(0)} scale={4} />,
+    title: 'Mind your echo',
+    body: 'Three seconds after every beam, your echo throws the same beam again from where you stood. A dotted warning line shows where an echo is about to fire.',
+  },
+  {
+    art: <span className="pair"><PixelArt sprite={SHARD} scale={4} /><PixelArt sprite={beaconSprite(0, true)} scale={3} /></span>,
+    title: 'Bring lenses home',
+    body: 'Walk over amber lens shards to carry them, up to five. Stand on your own beacon to bank them. Each one you carry slows you down.',
+  },
+  {
+    art: <PixelArt sprite={keeperSprite(1)} scale={4} flip />,
+    title: 'Catch the others',
+    body: 'A keeper hit by a beam is stunned for a moment and drops every lens they carry. Banked lenses are safe. Most banked after two minutes wins.',
+  },
+];
+
+export function Manual({ compact = false }: { compact?: boolean }) {
+  return (
+    <ol className={`manual ${compact ? 'compact' : ''}`}>
+      {STEPS.map((s, i) => (
+        <li key={s.title}>
+          <span className="manual-num">{String(i + 1).padStart(2, '0')}</span>
+          <span className="manual-art">{s.art}</span>
+          <div>
+            <h3>{s.title}</h3>
+            <p>{s.body}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function Controls() {
+  return (
+    <table className="controls-table">
+      <thead><tr><th scope="col">Action</th><th scope="col">Keyboard and mouse</th><th scope="col">Touch</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Walk</th><td>WASD or arrows</td><td>Drag, left half</td></tr>
+        <tr><th scope="row">Aim</th><td>Mouse pointer</td><td>Drag, right half</td></tr>
+        <tr><th scope="row">Throw a beam</th><td>Click, or Space</td><td>Let go of the drag; a tap aims at the nearest keeper</td></tr>
+      </tbody>
+    </table>
+  );
+}

@@ -3,8 +3,10 @@ import { firebaseClient, serverNow } from '../firebase';
 import { TUNING } from '../game/constants';
 import { applyHit, createArenaState, hostStep, normalizeState, type ArenaState, type HostEvent, type HostPlayer } from '../game/host';
 import type { Hit, Match, Player, PosSample, RoomMeta, RoomStatus, Shot } from '../types';
+import { SessionExtras, type GameSession } from './types';
 
-const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// Letters only, minus the ones the pixel font makes easy to misread (B/8, I/1, O/0, Q, S/5, Z/2).
+const ROOM_CODE_ALPHABET = 'ACDEFGHJKLMNPRTUVWXY';
 const MAX_PLAYERS = 6;
 const POS_BUFFER_MS = TUNING.echoDelayMs + 1500;
 
@@ -21,7 +23,8 @@ type Listener = () => void;
  * One live connection to a room. Realtime data (positions, shots, hits) is kept in plain fields the
  * Phaser scene reads every frame; React only re-renders on `version` changes (meta and shared state).
  */
-export class Session {
+export class Session implements GameSession {
+  readonly kind = 'online' as const;
   readonly uid: string;
   readonly code: string;
   meta: RoomMeta | null = null;
@@ -43,6 +46,12 @@ export class Session {
   private hostTimer = 0;
   private lastPosWrite = 0;
   private lastPos?: PosSample;
+
+  private readonly extras = new SessionExtras(() => this.bump());
+  get feed() { return this.extras.feed; }
+  get flags() { return this.extras.flags; }
+  pushFeed(text: string, slot: number) { this.extras.pushFeed(text, slot); }
+  flag(name: string) { this.extras.flag(name); }
 
   private constructor(db: Database, uid: string, code: string) {
     this.db = db;

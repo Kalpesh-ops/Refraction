@@ -24,8 +24,6 @@ export const TUNING = {
   interpDelayMs: 110,
 };
 
-export const PLAYER_COLORS = ['#3ee8d4', '#ff7a59', '#ffd35c', '#c77dff', '#5c9dff', '#ff6fae'];
-
 export type Surface = 'mirror' | 'stone';
 export interface Segment { ax: number; ay: number; bx: number; by: number; h: number; kind: Surface }
 
