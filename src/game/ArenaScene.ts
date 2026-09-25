@@ -706,7 +706,7 @@ export class ArenaScene extends Phaser.Scene {
       if (Math.floor(now / 160 + slot) % 7 !== 0) this.lightAt('light-beacon', x, y - 24, 18);
       b.label.setText(b.uid === this.uid && !this.quiet ? 'YOUR BEACON' : this.nameOf(b.uid));
       const o = this.overlay;
-      const cells = TUNING.winScore;
+      const cells = this.session.match?.winScore ?? TUNING.winScore;
       const step = ART + 2;
       const total = cells * step - 2;
       const gx = snap(x - total / 2);

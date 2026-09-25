@@ -59,7 +59,7 @@ export function createArenaState(uids: string[], now: number, rand: () => number
 const landed = (s: Shard, now: number) => s.born === undefined || now - s.born >= TUNING.castFlightMs;
 
 /** One host tick: pickups, banking, the win check and casting. Mutates state; returns events for effects. */
-export function hostStep(state: ArenaState, players: Record<string, HostPlayer>, now: number, rand: () => number = Math.random): { changed: boolean; events: HostEvent[] } {
+export function hostStep(state: ArenaState, players: Record<string, HostPlayer>, now: number, rand: () => number = Math.random, winScore = TUNING.winScore): { changed: boolean; events: HostEvent[] } {
   let changed = false;
   const events: HostEvent[] = [];
   if (state.winner) return { changed, events };
@@ -84,7 +84,7 @@ export function hostStep(state: ArenaState, players: Record<string, HostPlayer>,
       state.carry[uid] = 0;
       events.push({ type: 'bank', uid, amount: carrying, x: sx, y: sy });
       changed = true;
-      if (!state.winner && state.score[uid] >= TUNING.winScore) {
+      if (!state.winner && state.score[uid] >= winScore) {
         state.winner = uid;
         events.push({ type: 'win', uid });
         return { changed, events };

@@ -70,6 +70,17 @@ input {
   color: var(--ink);
   width: 100%;
 }
+select {
+  font-family: var(--pixel);
+  font-size: 1rem;
+  padding: 10px 12px 9px;
+  border: 3px solid var(--ink);
+  border-radius: 0;
+  background: var(--lamp-l);
+  color: var(--ink);
+  width: 100%;
+}
+.rules { background: var(--paper-2); }
 input::placeholder { color: var(--stone); font-family: var(--serif); font-style: italic; font-size: 1rem; }
 .error { font-family: var(--pixel); color: var(--rust); font-size: .95rem; }
 .fineprint { font-size: .9rem; color: var(--ink-2); }

@@ -21,12 +21,12 @@ const STEPS = [
   {
     art: <span className="pair"><PixelArt sprite={SHARD} scale={4} /><PixelArt sprite={beaconSprite(0, true)} scale={3} /></span>,
     title: 'Bring lenses home',
-    body: 'The prism at the centre casts a new lens every few seconds. Walk over one to carry it, up to five, and stand on your own beacon to bank them. Carrying slows you down. The first keeper to bank ten lights their lighthouse and wins.',
+    body: 'The prism at the centre casts a new lens every few seconds. Walk over one to carry it, up to five, and stand on your own beacon to bank them. Carrying slows you down. The first keeper to bank the target (ten unless the host changes it) lights their lighthouse and wins.',
   },
   {
     art: <PixelArt sprite={keeperSprite(1)} scale={4} flip />,
     title: 'Catch the others',
-    body: 'A keeper hit by a beam is knocked flat, drops every lens they carry, and loses one lens from their beacon straight into your hands. Nothing is safe, so guard your beacon. If three minutes pass first, most lenses wins.',
+    body: 'A keeper hit by a beam is knocked flat, drops every lens they carry, and loses one lens from their beacon straight into your hands. Nothing is safe, so guard your beacon. If the clock runs out first, most lenses wins.',
   },
 ];
 

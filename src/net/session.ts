@@ -2,7 +2,7 @@ import { get, onChildAdded, onDisconnect, onValue, push, ref, set, update, type 
 import { firebaseClient, serverNow } from '../firebase';
 import { TUNING } from '../game/constants';
 import { applyHit, createArenaState, hostStep, normalizeState, type ArenaState, type HostEvent, type HostPlayer } from '../game/host';
-import type { Hit, Look, Match, Player, PosSample, RoomMeta, RoomStatus, Shot } from '../types';
+import type { Hit, Look, Match, Player, PosSample, RoomMeta, RoomSettings, RoomStatus, Shot } from '../types';
 import { SessionExtras, type GameSession } from './types';
 
 // Letters only, minus the ones the pixel font makes easy to misread (B/8, I/1, O/0, Q, S/5, Z/2).
@@ -109,10 +109,10 @@ export class Session implements GameSession {
     let loaded = 0;
     const field = <K extends keyof RoomMeta>(key: K) => this.unsubs.push(onValue(this.path(key), (snap) => {
       meta[key] = (snap.val() ?? undefined) as RoomMeta[K];
-      if (++loaded >= 5) emitMeta();
+      if (++loaded >= 6) emitMeta();
     }));
     // `loaded` counts initial loads so the first emit waits for every field.
-    field('hostUid'); field('status'); field('createdAt'); field('players'); field('match');
+    field('hostUid'); field('status'); field('createdAt'); field('players'); field('match'); field('settings');
 
     this.unsubs.push(onValue(this.path('state'), (snap) => {
       this.state = normalizeState(snap.val());
@@ -173,6 +173,10 @@ export class Session implements GameSession {
     await update(this.path(`players/${this.uid}`), { slot: look.slot, figure: look.figure });
   }
 
+  async setSettings(settings: RoomSettings) {
+    if (this.isHost) await update(this.path(), { settings });
+  }
+
   /** Publishes our position at ~20 Hz, or immediately when stunned state changes. */
   publishPos(sample: PosSample, force = false) {
     const now = sample.t;
@@ -201,8 +205,10 @@ export class Session implements GameSession {
     const players = Object.values(this.meta.players).filter((p) => p.connected);
     if (players.length < 2) throw new Error('Refraction needs at least two connected players.');
     const now = serverNow();
+    const roundMs = this.meta.settings?.roundMs ?? TUNING.roundMs;
+    const winScore = this.meta.settings?.winScore ?? TUNING.winScore;
     const seats = Object.fromEntries([...players].sort((a, b) => a.slot - b.slot).map((p, i) => [p.id, i]));
-    const match: Match = { round: (this.meta.match?.round ?? 0) + 1, startsAt: now + TUNING.countdownMs, endsAt: now + TUNING.countdownMs + TUNING.roundMs, seats };
+    const match: Match = { round: (this.meta.match?.round ?? 0) + 1, startsAt: now + TUNING.countdownMs, endsAt: now + TUNING.countdownMs + roundMs, seats, winScore };
     const state = createArenaState(players.map((p) => p.id), now);
     this.processedHits.clear();
     this.pendingHits.length = 0;
@@ -266,7 +272,7 @@ export class Session implements GameSession {
         const pos = this.latest(p.id);
         if (pos) players[p.id] = { x: pos.x, y: pos.y, stunnedUntil: pos.s, slot: this.seatOf(p.id) };
       }
-      const step = hostStep(state, players, now);
+      const step = hostStep(state, players, now, Math.random, match.winScore ?? TUNING.winScore);
       if (step.changed) this.dirty = true;
       events.push(...step.events);
     }

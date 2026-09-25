@@ -29,6 +29,9 @@ export const TUNING = {
   interpDelayMs: 110,
 };
 
+export const ROUND_OPTIONS = [120_000, 180_000, 300_000, 480_000];
+export const TARGET_OPTIONS = [5, 10, 15, 20];
+
 export type Surface = 'mirror' | 'stone';
 export interface Segment { ax: number; ay: number; bx: number; by: number; h: number; kind: Surface }
 

@@ -1,5 +1,5 @@
 import type { ArenaState } from '../game/host';
-import type { Hit, Look, Match, PosSample, RoomMeta, RoomStatus, Shot } from '../types';
+import type { Hit, Look, Match, PosSample, RoomMeta, RoomSettings, RoomStatus, Shot } from '../types';
 
 export type SessionKind = 'online' | 'practice' | 'demo';
 
@@ -31,6 +31,7 @@ export interface GameSession {
   figureOf(uid: string): number;
   /** Online lobby only: change colour and figure. */
   setLook?(look: Look): Promise<void>;
+  setSettings?(settings: RoomSettings): Promise<void>;
   subscribe(fn: () => void): () => void;
   publishPos(sample: PosSample, force?: boolean): void;
   fire(shot: Omit<Shot, 'o'>): string;

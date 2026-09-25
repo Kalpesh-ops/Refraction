@@ -138,6 +138,14 @@ describe('host rules', () => {
     expect(events.some((e) => e.type === 'win')).toBe(true);
     expect(hostStep(s, { a: { x: sx, y: sy, stunnedUntil: 0, slot: 0 } }, 9000, seeded()).changed).toBe(false);
   });
+  it('banking 5 lenses sets state.winner when winScore 5 is passed to hostStep', () => {
+    const s = createArenaState(uids, 0, seeded());
+    s.score.a = 0;
+    s.carry.a = 5;
+    const [sx, sy] = SHRINES[0];
+    hostStep(s, { a: { x: sx, y: sy, stunnedUntil: 0, slot: 0 } }, 1000, seeded(), 5);
+    expect(s.winner).toBe('a');
+  });
   it('casts new lenses from the prism slowly, and they cannot be taken mid-flight', () => {
     const s = createArenaState(uids, 0, seeded());
     s.shards = {};

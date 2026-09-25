@@ -6,8 +6,9 @@ export type RoomStatus = 'lobby' | 'playing' | 'results';
 export interface Player { id: string; name: string; slot: number; figure?: number; joinedAt: number; connected: boolean }
 /** A keeper's chosen look: cloak colour (slot) and silhouette (figure). */
 export interface Look { slot: number; figure: number }
+export interface RoomSettings { roundMs: number; winScore: number }
 /** `seats` maps each keeper to a beacon, packed from 0 at the start of the round so beacons sit in fair pairs. */
-export interface Match { round: number; startsAt: number; endsAt: number; seats?: Record<string, number> }
+export interface Match { round: number; startsAt: number; endsAt: number; seats?: Record<string, number>; winScore?: number }
 
 /** Owner-written position sample. `s` is stunned-until (server ms). */
 export interface PosSample { x: number; y: number; a: number; t: number; s: number }
@@ -25,6 +26,7 @@ export interface RoomMeta {
   createdAt: number;
   players: Record<string, Player>;
   match?: Match;
+  settings?: RoomSettings;
 }
 
 export type { ArenaState };

@@ -4,13 +4,13 @@ import { KEEPERS, keeperOf } from './art/palette';
 import { FIGURES, SHARD, beaconSprite, ghostSprite, keeperSprite } from './art/sprites';
 import { isMuted, setMuted, sfx, startMusic, stopMusic, unlockAudio } from './audio/sfx';
 import { serverNow } from './firebase';
-import { H, OBSTACLES, SHRINES, TUNING, W } from './game/constants';
+import { H, OBSTACLES, ROUND_OPTIONS, SHRINES, TARGET_OPTIONS, TUNING, W } from './game/constants';
 import { GameBoard } from './game/GameBoard';
 import { standings } from './game/host';
 import { LocalSession } from './net/local';
 import { Session } from './net/session';
 import type { GameSession } from './net/types';
-import type { Look, RoomMeta } from './types';
+import type { Look, RoomMeta, RoomSettings } from './types';
 import { Footer, Privacy, Terms } from './ui/Legal';
 import { Controls, Manual } from './ui/Manual';
 import { Digits } from './ui/Digits';
@@ -366,6 +366,7 @@ function Lobby({ session, leave }: { session: GameSession; leave: () => void }) 
               onChoose={(change) => { const l = { slot: me.slot, figure: me.figure ?? 0, ...change }; store.set(LOOK_KEY, JSON.stringify(l)); void session.setLook?.(l); }}
             />
           )}
+          <RoundRules session={session} />
         </div>
         <section className="panel lobby-manual">
           <h2>Before the lamps are lit</h2>
@@ -374,6 +375,54 @@ function Lobby({ session, leave }: { session: GameSession; leave: () => void }) 
         </section>
       </main>
     </div>
+  );
+}
+
+function RoundRules({ session }: { session: GameSession }) {
+  const settings = session.meta?.settings;
+  const current: RoomSettings = {
+    roundMs: settings?.roundMs ?? TUNING.roundMs,
+    winScore: settings?.winScore ?? TUNING.winScore,
+  };
+  return (
+    <section className="panel rules">
+      <h2>Round rules</h2>
+      {session.isHost ? (
+        <>
+          <label>
+            <span>Round length</span>
+            <select
+              value={current.roundMs}
+              onChange={(e) => session.setSettings?.({ ...current, roundMs: Number(e.target.value) })}
+            >
+              {ROUND_OPTIONS.map((ms) => (
+                <option key={ms} value={ms}>
+                  {Math.round(ms / 60_000)} minutes
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Lenses to win</span>
+            <select
+              value={current.winScore}
+              onChange={(e) => session.setSettings?.({ ...current, winScore: Number(e.target.value) })}
+            >
+              {TARGET_OPTIONS.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      ) : (
+        <>
+          <p>{Math.round(current.roundMs / 60_000)} minutes, first to {current.winScore} lenses</p>
+          <p className="fineprint">The host sets the rules.</p>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -412,13 +461,14 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
   useTicker(200);
   const meta = session.meta!;
   const match = session.match;
+  const goal = match?.winScore ?? TUNING.winScore;
   const now = serverNow();
   const state = session.state;
   const practice = session.kind === 'practice';
   const participants = Object.keys(state.score).sort((a, b) => (state.score[b] ?? 0) - (state.score[a] ?? 0) || session.slotOf(a) - session.slotOf(b));
   const countdown = match ? Math.ceil((match.startsAt - now) / 1000) : 0;
   const started = match ? now >= match.startsAt : false;
-  const remaining = match ? (started ? match.endsAt - now : TUNING.roundMs) : 0;
+  const remaining = match ? (started ? match.endsAt - now : match.endsAt - match.startsAt) : 0;
   const spectating = !(session.uid in state.score);
   const feed = session.feed.filter((f) => Date.now() - f.t < 6000).slice(0, 4);
 
@@ -429,7 +479,7 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
     <main className="play">
       <header className="hud">
         <div className="hud-left">
-          <span className="hud-goal"><span className="hud-label">First to</span><Digits value={TUNING.winScore} size={3} /></span>
+          <span className="hud-goal"><span className="hud-label">First to</span><Digits value={goal} size={3} /></span>
           {!practice && <strong className={`hud-clock ${started && remaining < 15_000 ? 'late' : ''}`}><Digits value={clock(remaining)} size={3} label={`${clock(remaining)} left`} /></strong>}
         </div>
         <ol className="hud-board" aria-label="Lenses banked">
@@ -452,7 +502,7 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
         <GameBoard session={session} />
         {!started && countdown > 0 && (
           <div className="countdown" key={countdown}>
-            <div className="countdown-plate"><Digits value={countdown} size={22} /><span>First to {TUNING.winScore} lenses lights the lighthouse</span></div>
+            <div className="countdown-plate"><Digits value={countdown} size={22} /><span>First to {goal} lenses lights the lighthouse</span></div>
           </div>
         )}
         {started && match && now - match.startsAt < 800 && <div className="countdown go"><div className="countdown-plate"><span className="go-word">Go</span></div></div>}
@@ -473,6 +523,8 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
 
 function Results({ session, leave }: { session: GameSession; leave: () => void }) {
   const meta = session.meta!;
+  const match = session.match;
+  const goal = match?.winScore ?? TUNING.winScore;
   const state = session.state;
   const { ranked, tie } = standings(state, Object.keys(state.score));
   const winner = meta.players[ranked[0]];
@@ -486,7 +538,7 @@ function Results({ session, leave }: { session: GameSession; leave: () => void }
       <header className="masthead"><Brand /><nav><button type="button" className="btn small quiet" onClick={leave}>Leave room</button></nav></header>
       <main className="results">
         <div className="results-main">
-        <p className="kicker">{state.winner ? `First to ${TUNING.winScore} lenses` : "The clock ran out"} · the ledger</p>
+        <p className="kicker">{state.winner ? `First to ${goal} lenses` : "The clock ran out"} · the ledger</p>
         <div className="results-head">
           <h1>{title}</h1>
           {!tie && winner && <PixelArt sprite={keeperSprite(winner.slot, 0, winner.figure ?? 0)} scale={8} label={`${winner.name}, the winner`} />}
