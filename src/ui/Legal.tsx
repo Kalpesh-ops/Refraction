@@ -58,7 +58,7 @@ export function Privacy() {
       <h2>Where it lives</h2>
       <p>Room data is stored in Google Firebase Realtime Database, in the Singapore region. Firebase Authentication, Google’s hosting of our fonts (Google Fonts), and our web host (Vercel) receive technical data such as your IP address and browser details when your browser contacts them. Their own privacy policies apply to that processing.</p>
       <h2>On your device</h2>
-      <p>The game keeps three small values in your browser’s local storage: the last display name you used, the last room you were in (so a refresh puts you back), and whether sound is muted. The Firebase SDK also stores your anonymous sign-in in your browser. Practice mode runs entirely on your device and sends nothing.</p>
+      <p>The game keeps four small values in your browser’s local storage: the last display name you used, the keeper figure and colour you picked, the last room you were in (so a refresh puts you back), and whether sound is muted. The Firebase SDK also stores your anonymous sign-in in your browser. Practice mode runs entirely on your device and sends nothing.</p>
       <p>The game itself sets no tracking cookies.</p>
       <h2>How long</h2>
       <p>Rooms are not deleted automatically yet. We clear old rooms by hand from time to time. If you want a room removed sooner, open an issue with its room code. Clearing your browser’s site data removes everything stored on your device.</p>
