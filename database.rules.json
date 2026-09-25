@@ -23,6 +23,9 @@
           "$id": {
             ".write": "auth != null && !data.exists() && newData.child('v').val() === auth.uid && data.parent().parent().child('hostUid').exists()"
           }
+        },
+        "hostUid": {
+          ".write": "auth != null && data.exists() && newData.val() === auth.uid && data.parent().child('players').child(auth.uid).child('connected').val() === true && data.parent().child('players').child(data.val()).child('connected').val() !== true"
         }
       }
     }

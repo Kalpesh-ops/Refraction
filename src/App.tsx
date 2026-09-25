@@ -507,7 +507,7 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
             );
           })}
         </ol>
-        <div className="hud-tools"><MuteButton />{practice && <button type="button" className="btn small quiet" onClick={leave}>Leave</button>}</div>
+        <div className="hud-tools"><MuteButton /><button type="button" className="btn small quiet" onClick={leave}>Leave</button></div>
       </header>
       <div className="stage">
         <GameBoard session={session} />

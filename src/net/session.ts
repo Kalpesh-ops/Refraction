@@ -10,6 +10,13 @@ const ROOM_CODE_ALPHABET = 'ACDEFGHJKLMNPRTUVWXY';
 const MAX_PLAYERS = 6;
 const POS_BUFFER_MS = TUNING.echoDelayMs + 1500;
 
+/** Who should host next: the longest-present connected keeper other than `except`. */
+export function successorOf(players: Record<string, Player>, except: string) {
+  return Object.values(players)
+    .filter((p) => p.connected && p.id !== except)
+    .sort((a, b) => a.joinedAt - b.joinedAt || a.id.localeCompare(b.id))[0]?.id;
+}
+
 const generateCode = () => Array.from({ length: 5 }, () => ROOM_CODE_ALPHABET[Math.floor(Math.random() * ROOM_CODE_ALPHABET.length)]).join('');
 const freeSlot = (players: Record<string, Player>, preferred = -1) => {
   const used = new Set(Object.values(players).map((p) => p.slot));
@@ -101,8 +108,15 @@ export class Session implements GameSession {
   private connect() {
     const meta: Partial<RoomMeta> = { code: this.code };
     const emitMeta = () => {
+      const before = this.meta?.hostUid;
       if (!meta.hostUid) { this.missing = true; this.meta = null; }
       else { this.missing = false; this.meta = { ...(meta as RoomMeta), players: meta.players ?? {} }; }
+      const m = this.meta;
+      if (m && before && before !== m.hostUid) {
+        const p = m.players[m.hostUid];
+        this.pushFeed(m.hostUid === this.uid ? 'You are the host now' : `${p?.name ?? 'Someone'} is the host now`, p?.slot ?? 0);
+      }
+      this.claimHostIfOrphaned();
       this.syncHostLoop();
       this.bump();
     };
@@ -153,8 +167,38 @@ export class Session implements GameSession {
       const connected = this.path(`players/${this.uid}/connected`);
       onDisconnect(connected).set(false).then(() => set(connected, true)).catch(console.error);
     }));
+    document.addEventListener('visibilitychange', this.onVisibility);
     return this;
   }
+
+  /**
+   * Host migration. When the host's presence drops, the longest-present connected keeper claims the
+   * room (the database rules allow that write only while the recorded host is disconnected). Everyone
+   * computes the same successor, so at most one claim lands.
+   */
+  private claiming = false;
+  private claimHostIfOrphaned() {
+    const m = this.meta;
+    if (!m || this.claiming || m.hostUid === this.uid) return;
+    const host = m.players[m.hostUid];
+    if (host?.connected) return;
+    if (!m.players[this.uid]?.connected || successorOf(m.players, m.hostUid) !== this.uid) return;
+    this.claiming = true;
+    set(this.path('hostUid'), this.uid).catch(console.error).finally(() => { this.claiming = false; });
+  }
+
+  /** The host passes the room on before going away, so the round never stalls. */
+  private async handOff() {
+    const m = this.meta;
+    if (!m || m.hostUid !== this.uid) return;
+    const next = successorOf(m.players, this.uid);
+    if (next) await set(this.path('hostUid'), next).catch(console.error);
+  }
+
+  // A hidden tab runs timers once a second at best, which would freeze the host loop mid-round.
+  private readonly onVisibility = () => {
+    if (document.visibilityState === 'hidden' && this.status === 'playing') void this.handOff();
+  };
 
   subscribe(fn: Listener) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   private bump() { this.version++; this.listeners.forEach((fn) => fn()); }
@@ -220,11 +264,13 @@ export class Session implements GameSession {
   }
 
   async leave() {
+    await this.handOff();
     await set(this.path(`players/${this.uid}/connected`), false).catch(() => {});
     this.dispose();
   }
 
   dispose() {
+    document.removeEventListener('visibilitychange', this.onVisibility);
     this.unsubs.forEach((u) => u());
     this.unsubs.length = 0;
     this.listeners.clear();
