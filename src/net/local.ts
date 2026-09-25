@@ -117,6 +117,7 @@ export class LocalSession implements GameSession {
     const now = serverNow();
     const dt = Math.min(0.1, (now - (this.last || now)) / 1000);
     this.last = now;
+    if (this.meta.status === 'results') return;
     if (now >= match.endsAt) { this.newRound(match.round + 1); return; }
     const live = now >= match.startsAt;
     let changed = false;
@@ -168,6 +169,11 @@ export class LocalSession implements GameSession {
       changed ||= step.changed;
     }
 
+    if (this.state.winner) {
+      this.meta = { ...this.meta, status: 'results' };
+      changed = true;
+      if (this.kind === 'demo') window.setTimeout(() => this.newRound(match.round + 1), 4000);
+    }
     if (changed) { this.state = structuredClone(this.state); this.bump(); }
   }
 

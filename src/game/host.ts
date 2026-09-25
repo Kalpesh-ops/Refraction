@@ -1,7 +1,8 @@
 import { H, SHRINES, TUNING, W } from './constants';
 import { blocked, dist, resolveCircle, type Vec } from './geometry';
 
-export interface Shard { x: number; y: number; lockUid?: string; lockUntil?: number }
+/** `born` is when the central prism cast it; it flies for castFlightMs and can't be taken mid-air. */
+export interface Shard { x: number; y: number; born?: number; lockUid?: string; lockUntil?: number }
 
 /** Host-owned shared state. Written to Firebase only when it changes. */
 export interface ArenaState {
@@ -11,23 +12,33 @@ export interface ArenaState {
   stuns: Record<string, number>;
   nextId: number;
   lastSpawn: number;
+  /** First keeper to bank winScore lenses. Set once; ends the round. */
+  winner?: string;
 }
 
 export interface HostPlayer { x: number; y: number; stunnedUntil: number; slot: number }
 
 export type HostEvent =
   | { type: 'pickup'; uid: string; x: number; y: number }
-  | { type: 'bank'; uid: string; amount: number; x: number; y: number };
+  | { type: 'bank'; uid: string; amount: number; x: number; y: number }
+  | { type: 'win'; uid: string };
 
-export const shardTarget = (players: number) => Math.min(14, 5 + players * 2);
+/** Few lenses on the floor at once, so they are worth fighting over. */
+export const shardTarget = (players: number) => Math.min(8, players + 2);
 
-function freeSpot(state: ArenaState, players: Vec[], rand: () => number): Vec | null {
+export const CENTER: Vec = { x: W / 2, y: H / 2 };
+
+/** A landing spot for a lens cast from the central prism: somewhere in the hall, clear of walls, shrines and other lenses. */
+function castSpot(state: ArenaState, players: Vec[], rand: () => number): Vec | null {
   for (let tries = 0; tries < 40; tries++) {
-    const p = { x: 60 + rand() * (W - 120), y: 60 + rand() * (H - 120) };
+    const angle = rand() * Math.PI * 2;
+    const r = 130 + rand() * 330;
+    const p = { x: CENTER.x + Math.cos(angle) * r * 1.45, y: CENTER.y + Math.sin(angle) * r * 0.78 };
+    if (p.x < 50 || p.x > W - 50 || p.y < 50 || p.y > H - 50) continue;
     if (blocked(p, 26)) continue;
-    if (SHRINES.some(([x, y]) => dist(p, { x, y }) < 120)) continue;
-    if (Object.values(state.shards).some((s) => dist(p, s) < 70)) continue;
-    if (players.some((q) => dist(p, q) < 90)) continue;
+    if (SHRINES.some(([x, y]) => dist(p, { x, y }) < 130)) continue;
+    if (Object.values(state.shards).some((s) => dist(p, s) < 90)) continue;
+    if (players.some((q) => dist(p, q) < 70)) continue;
     return p;
   }
   return null;
@@ -38,21 +49,25 @@ export function createArenaState(uids: string[], now: number, rand: () => number
   for (const uid of uids) { state.carry[uid] = 0; state.score[uid] = 0; state.stuns[uid] = 0; }
   const count = shardTarget(uids.length);
   for (let i = 0; i < count; i++) {
-    const p = freeSpot(state, [], rand);
+    const p = castSpot(state, [], rand);
     if (p) state.shards[`s${state.nextId++}`] = { x: Math.round(p.x), y: Math.round(p.y) };
   }
   return state;
 }
 
-/** One host tick: pickups, banking and respawns. Mutates state; returns events for effects. */
+const landed = (s: Shard, now: number) => s.born === undefined || now - s.born >= TUNING.castFlightMs;
+
+/** One host tick: pickups, banking, the win check and casting. Mutates state; returns events for effects. */
 export function hostStep(state: ArenaState, players: Record<string, HostPlayer>, now: number, rand: () => number = Math.random): { changed: boolean; events: HostEvent[] } {
   let changed = false;
   const events: HostEvent[] = [];
+  if (state.winner) return { changed, events };
 
   for (const [uid, p] of Object.entries(players)) {
     if (now < p.stunnedUntil) continue;
     for (const [id, shard] of Object.entries(state.shards)) {
       if ((state.carry[uid] ?? 0) >= TUNING.carryMax) break;
+      if (!landed(shard, now)) continue;
       if (shard.lockUid === uid && now < (shard.lockUntil ?? 0)) continue;
       if (dist(p, shard) < TUNING.pickupRadius) {
         delete state.shards[id];
@@ -68,15 +83,20 @@ export function hostStep(state: ArenaState, players: Record<string, HostPlayer>,
       state.carry[uid] = 0;
       events.push({ type: 'bank', uid, amount: carrying, x: sx, y: sy });
       changed = true;
+      if (!state.winner && state.score[uid] >= TUNING.winScore) {
+        state.winner = uid;
+        events.push({ type: 'win', uid });
+        return { changed, events };
+      }
     }
   }
 
   const target = shardTarget(Object.keys(players).length);
-  if (Object.keys(state.shards).length < target && now - state.lastSpawn > 900) {
-    const p = freeSpot(state, Object.values(players), rand);
+  if (Object.keys(state.shards).length < target && now - state.lastSpawn >= TUNING.castEveryMs) {
+    const p = castSpot(state, Object.values(players), rand);
     state.lastSpawn = now;
     if (p) {
-      state.shards[`s${state.nextId++}`] = { x: Math.round(p.x), y: Math.round(p.y) };
+      state.shards[`s${state.nextId++}`] = { x: Math.round(p.x), y: Math.round(p.y), born: now };
       changed = true;
     }
   }
@@ -84,30 +104,47 @@ export function hostStep(state: ArenaState, players: Record<string, HostPlayer>,
   return { changed, events };
 }
 
-/** A player reported being hit: they drop everything they carry in a ring around them. */
-export function applyHit(state: ArenaState, victim: string, by: string, at: Vec, now: number): number {
-  const count = state.carry[victim] ?? 0;
+/**
+ * A keeper reported being caught. They drop everything they carry, and one lens jumps out of their
+ * beacon into the catcher's hands (or onto the floor if the catcher's hands are full).
+ */
+export function applyHit(state: ArenaState, victim: string, by: string, at: Vec, now: number): { dropped: number; stolen: boolean } {
+  const dropped = state.carry[victim] ?? 0;
   state.carry[victim] = 0;
-  if (by !== victim) state.stuns[by] = (state.stuns[by] ?? 0) + 1;
-  for (let i = 0; i < count; i++) {
-    const angle = (i / Math.max(1, count)) * Math.PI * 2 + 0.4;
+  const scatter = (i: number, n: number, lockUid?: string) => {
+    const angle = (i / Math.max(1, n)) * Math.PI * 2 + 0.4;
     const p = resolveCircle({ x: at.x + Math.cos(angle) * 58, y: at.y + Math.sin(angle) * 58 }, 14);
-    state.shards[`s${state.nextId++}`] = { x: Math.round(p.x), y: Math.round(p.y), lockUid: victim, lockUntil: now + TUNING.dropLockMs };
+    state.shards[`s${state.nextId++}`] = lockUid
+      ? { x: Math.round(p.x), y: Math.round(p.y), lockUid, lockUntil: now + TUNING.dropLockMs }
+      : { x: Math.round(p.x), y: Math.round(p.y) };
+  };
+  for (let i = 0; i < dropped; i++) scatter(i, dropped + 1, victim);
+
+  let stolen = false;
+  if (by !== victim) {
+    state.stuns[by] = (state.stuns[by] ?? 0) + 1;
+    if ((state.score[victim] ?? 0) > 0 && !state.winner) {
+      state.score[victim] -= 1;
+      stolen = true;
+      if ((state.carry[by] ?? 0) < TUNING.carryMax) state.carry[by] = (state.carry[by] ?? 0) + 1;
+      else scatter(dropped, dropped + 1);
+    }
   }
-  return count;
+  return { dropped, stolen };
 }
 
-/** Ranked results; `tie` is true when the top two scores are equal. */
-export function standings(state: Pick<ArenaState, 'score'>, uids: string[]) {
-  const ranked = [...uids].sort((a, b) => (state.score[b] ?? 0) - (state.score[a] ?? 0) || a.localeCompare(b));
+/** Ranked results; the lighthouse-lighter is always first. `tie` only when time ran out on equal scores. */
+export function standings(state: Pick<ArenaState, 'score' | 'winner'>, uids: string[]) {
+  const ranked = [...uids].sort((a, b) =>
+    Number(b === state.winner) - Number(a === state.winner) || (state.score[b] ?? 0) - (state.score[a] ?? 0) || a.localeCompare(b));
   const top = state.score[ranked[0]] ?? 0;
-  const tie = ranked.length > 1 && (state.score[ranked[1]] ?? 0) === top;
+  const tie = !state.winner && ranked.length > 1 && (state.score[ranked[1]] ?? 0) === top;
   return { ranked, tie };
 }
 
-/** Firebase drops empty objects; restore the shape. */
+/** Firebase drops empty objects and undefined fields; restore the shape. */
 export function normalizeState(raw: Partial<ArenaState> | null | undefined): ArenaState {
-  return {
+  const state: ArenaState = {
     shards: raw?.shards ?? {},
     carry: raw?.carry ?? {},
     score: raw?.score ?? {},
@@ -115,4 +152,6 @@ export function normalizeState(raw: Partial<ArenaState> | null | undefined): Are
     nextId: raw?.nextId ?? 0,
     lastSpawn: raw?.lastSpawn ?? 0,
   };
+  if (raw?.winner) state.winner = raw.winner;
+  return state;
 }

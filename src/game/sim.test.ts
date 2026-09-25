@@ -95,7 +95,7 @@ describe('host rules', () => {
     const s = createArenaState(uids, 0, seeded());
     s.shards = {};
     s.carry.b = 3;
-    expect(applyHit(s, 'b', 'a', { x: 640, y: 600 }, 1000)).toBe(3);
+    expect(applyHit(s, 'b', 'a', { x: 640, y: 600 }, 1000)).toEqual({ dropped: 3, stolen: false });
     expect(s.carry.b).toBe(0);
     expect(s.stuns.a).toBe(1);
     const dropped = Object.values(s.shards);
@@ -106,9 +106,56 @@ describe('host rules', () => {
     hostStep(s, { b: { x: first.x, y: first.y, stunnedUntil: 0, slot: 1 } }, 1000 + TUNING.dropLockMs + 1, seeded());
     expect(s.carry.b).toBeGreaterThan(0);
   });
+  it('a catch steals one banked lens into the catcher hands', () => {
+    const s = createArenaState(uids, 0, seeded());
+    s.score.b = 4;
+    expect(applyHit(s, 'b', 'a', { x: 640, y: 600 }, 1000).stolen).toBe(true);
+    expect(s.score.b).toBe(3);
+    expect(s.carry.a).toBe(1);
+  });
+  it('a catcher with full hands drops the stolen lens on the floor instead', () => {
+    const s = createArenaState(uids, 0, seeded());
+    s.shards = {};
+    s.score.b = 2;
+    s.carry.a = TUNING.carryMax;
+    applyHit(s, 'b', 'a', { x: 640, y: 600 }, 1000);
+    expect(s.score.b).toBe(1);
+    expect(s.carry.a).toBe(TUNING.carryMax);
+    expect(Object.keys(s.shards)).toHaveLength(1);
+  });
+  it('nothing is stolen from an empty beacon', () => {
+    const s = createArenaState(uids, 0, seeded());
+    expect(applyHit(s, 'b', 'a', { x: 640, y: 600 }, 1000).stolen).toBe(false);
+    expect(s.carry.a).toBe(0);
+  });
+  it('banking the winning lens ends the round', () => {
+    const s = createArenaState(uids, 0, seeded());
+    s.score.a = TUNING.winScore - 2;
+    s.carry.a = 2;
+    const [sx, sy] = SHRINES[0];
+    const { events } = hostStep(s, { a: { x: sx, y: sy, stunnedUntil: 0, slot: 0 } }, 1000, seeded());
+    expect(s.winner).toBe('a');
+    expect(events.some((e) => e.type === 'win')).toBe(true);
+    expect(hostStep(s, { a: { x: sx, y: sy, stunnedUntil: 0, slot: 0 } }, 9000, seeded()).changed).toBe(false);
+  });
+  it('casts new lenses from the prism slowly, and they cannot be taken mid-flight', () => {
+    const s = createArenaState(uids, 0, seeded());
+    s.shards = {};
+    s.lastSpawn = 0;
+    hostStep(s, {}, TUNING.castEveryMs - 1, seeded());
+    expect(Object.keys(s.shards)).toHaveLength(0);
+    hostStep(s, {}, TUNING.castEveryMs, seeded(5));
+    const [cast] = Object.values(s.shards);
+    expect(cast.born).toBe(TUNING.castEveryMs);
+    hostStep(s, { a: { x: cast.x, y: cast.y, stunnedUntil: 0, slot: 0 } }, TUNING.castEveryMs + 100, seeded());
+    expect(s.carry.a).toBe(0);
+    hostStep(s, { a: { x: cast.x, y: cast.y, stunnedUntil: 0, slot: 0 } }, TUNING.castEveryMs + TUNING.castFlightMs, seeded());
+    expect(s.carry.a).toBe(1);
+  });
   it('ranks by score and reports ties', () => {
     expect(standings({ score: { a: 2, b: 5 } }, uids)).toEqual({ ranked: ['b', 'a'], tie: false });
     expect(standings({ score: { a: 3, b: 3 } }, uids).tie).toBe(true);
+    expect(standings({ score: { a: 3, b: 10 }, winner: 'b' }, uids)).toEqual({ ranked: ['b', 'a'], tie: false });
   });
   it('restores empty collections dropped by Firebase', () => {
     expect(normalizeState({ nextId: 4 })).toMatchObject({ shards: {}, carry: {}, score: {}, nextId: 4 });

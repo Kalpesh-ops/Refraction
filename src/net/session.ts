@@ -259,7 +259,7 @@ export class Session implements GameSession {
       events.push(...step.events);
     }
 
-    if (now >= match.endsAt && !this.ending) {
+    if ((now >= match.endsAt || state.winner) && !this.ending) {
       this.ending = true;
       update(this.path(), { status: 'results', state }).catch(console.error).finally(() => { this.ending = false; });
       this.dirty = false;
