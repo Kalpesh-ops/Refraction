@@ -11,6 +11,7 @@ import { Session } from './net/session';
 import type { GameSession } from './net/types';
 import { Footer, Privacy, Terms } from './ui/Legal';
 import { Controls, Manual } from './ui/Manual';
+import { Digits } from './ui/Digits';
 import { Brand, PixelArt } from './ui/Pixel';
 import './styles.css';
 
@@ -242,7 +243,7 @@ function Lobby({ session, leave }: { session: GameSession; leave: () => void }) 
             <p className="fineprint">Send the link to friends. They can join from a phone or a computer, up to six keepers.</p>
           </section>
           <section className="panel">
-            <h2>Keepers here <span className="count">{players.length} of 6</span></h2>
+            <h2>Keepers here <span className="count"><Digits value={`${players.length}/6`} size={2} label={`${players.length} of 6`} /></span></h2>
             <ul className="roster">
               {players.map((p) => (
                 <li key={p.id} className={p.connected ? '' : 'away'}>
@@ -279,7 +280,7 @@ const COACH = [
   { flag: 'echo', text: 'Fire once more and wait. Three seconds later, your echo throws the same beam.', touch: 'Fire once more and wait. Three seconds later, your echo throws the same beam.' },
   { flag: 'picked', text: 'Walk over an amber lens to pick it up.', touch: 'Walk over an amber lens to pick it up.' },
   { flag: 'banked', text: 'Carry it to your beacon, the lamp in your colour. The dots by your feet point the way.', touch: 'Carry it to your beacon, the lamp in your colour. The dots by your feet point the way.' },
-  { flag: 'stunned', text: 'Now the others will fight back. Catch one of them with a beam.', touch: 'Now the others will fight back. Catch one of them with a beam.' },
+  { flag: 'stunned', text: 'Now the others fight back. Catch one with a beam: they drop what they carry, and you steal a lens from their beacon.', touch: 'Now the others fight back. Catch one with a beam: they drop what they carry, and you steal a lens from their beacon.' },
 ];
 
 function Coach({ session, onDone }: { session: GameSession; onDone: () => void }) {
@@ -322,7 +323,8 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
     <main className="play">
       <header className="hud">
         <div className="hud-left">
-          {practice ? <span className="hud-label">Practice room</span> : <><span className="hud-label">Time</span><strong className={`hud-clock ${started && remaining < 15_000 ? 'late' : ''}`}>{clock(remaining)}</strong></>}
+          <span className="hud-goal"><span className="hud-label">First to</span><Digits value={TUNING.winScore} size={3} /></span>
+          {!practice && <strong className={`hud-clock ${started && remaining < 15_000 ? 'late' : ''}`}><Digits value={clock(remaining)} size={3} label={`${clock(remaining)} left`} /></strong>}
         </div>
         <ol className="hud-board" aria-label="Lenses banked">
           {participants.map((uid) => {
@@ -332,8 +334,8 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
               <li key={uid} className={uid === session.uid ? 'me' : ''}>
                 <PixelArt sprite={keeperSprite(p?.slot ?? 0)} scale={1.5} />
                 <span className="name">{uid === session.uid ? 'You' : p?.name}</span>
-                <b>{state.score[uid] ?? 0}</b>
-                {carry > 0 && <span className="carry" title={`Carrying ${carry}`}>+{carry}</span>}
+                <b><Digits value={state.score[uid] ?? 0} size={3} /></b>
+                {carry > 0 && <span className="carry" title={`Carrying ${carry}`}><Digits value={`+${carry}`} size={2} /></span>}
               </li>
             );
           })}
@@ -342,8 +344,12 @@ function Playing({ session, leave, goOnline }: { session: GameSession; leave: ()
       </header>
       <div className="stage">
         <GameBoard session={session} />
-        {!started && countdown > 0 && <div className="countdown" key={countdown}>{countdown}</div>}
-        {started && match && now - match.startsAt < 800 && <div className="countdown go">Go</div>}
+        {!started && countdown > 0 && (
+          <div className="countdown" key={countdown}>
+            <div className="countdown-plate"><Digits value={countdown} size={22} /><span>First to {TUNING.winScore} lenses lights the lighthouse</span></div>
+          </div>
+        )}
+        {started && match && now - match.startsAt < 800 && <div className="countdown go"><div className="countdown-plate"><span className="go-word">Go</span></div></div>}
         {spectating && !practice && <p className="banner">You joined mid-round. You will play in the next one.</p>}
         <p className="rotate-hint">Turn your phone sideways for a bigger arena.</p>
       </div>
@@ -366,12 +372,14 @@ function Results({ session, leave }: { session: GameSession; leave: () => void }
   const winner = meta.players[ranked[0]];
   const played = useRef(false);
   useEffect(() => { if (!played.current) { played.current = true; stopMusic(); sfx.end(); } }, []);
-  const title = tie ? 'The flame is shared' : ranked[0] === session.uid ? 'You keep the flame' : `${winner?.name ?? 'A keeper'} keeps the flame`;
+  const who = ranked[0] === session.uid ? 'You' : winner?.name ?? 'A keeper';
+  const title = state.winner ? `${who} lit the lighthouse` : tie ? 'Time. The flame is shared' : `Time. ${who} kept the flame`;
+  const again = session.kind === 'practice' ? 'Play again' : 'Back to the lobby';
   return (
     <div className="paper">
       <header className="masthead"><Brand /><nav><button type="button" className="btn small quiet" onClick={leave}>Leave room</button></nav></header>
       <main className="results">
-        <p className="kicker">Round {meta.match?.round ?? 1} · the ledger</p>
+        <p className="kicker">{state.winner ? `First to ${TUNING.winScore} lenses` : "The clock ran out"} · the ledger</p>
         <div className="results-head">
           <h1>{title}</h1>
           {!tie && winner && <PixelArt sprite={keeperSprite(winner.slot)} scale={8} label={`${winner.name}, the winner`} />}
@@ -384,17 +392,17 @@ function Results({ session, leave }: { session: GameSession; leave: () => void }
               const place = 1 + ranked.filter((o) => (state.score[o] ?? 0) > (state.score[uid] ?? 0)).length;
               return (
                 <tr key={uid} className={place === 1 && !tie ? 'first' : ''}>
-                  <td>{place}</td>
+                  <td><Digits value={place} size={3} /></td>
                   <td className="who"><PixelArt sprite={keeperSprite(p?.slot ?? 0)} scale={2} /><span>{p?.name}{uid === session.uid && ' (you)'}</span></td>
-                  <td>{state.score[uid] ?? 0}</td>
-                  <td>{state.stuns[uid] ?? 0}</td>
+                  <td><Digits value={state.score[uid] ?? 0} size={3} /></td>
+                  <td><Digits value={state.stuns[uid] ?? 0} size={3} /></td>
                 </tr>
               );
             })}
           </tbody>
         </table>
         <div className="actions">
-          {session.isHost ? <button className="btn primary" onClick={() => session.backToLobby()}>Back to the lobby</button> : <p className="fineprint">The host can start another round.</p>}
+          {session.isHost ? <button className="btn primary" onClick={() => session.backToLobby()}>{again}</button> : <p className="fineprint">The host can start another round.</p>}
           <button className="btn quiet" onClick={leave}>Leave room</button>
         </div>
       </main>

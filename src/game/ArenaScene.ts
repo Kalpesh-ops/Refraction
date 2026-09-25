@@ -8,7 +8,7 @@ import type { GameSession } from '../net/types';
 import type { Hit, PosSample, Shot } from '../types';
 import { H, OBSTACLES, SHRINES, SPAWNS, TUNING, W } from './constants';
 import { dist, pointAt, resolveCircle, sweepHits, traceBolt, type BoltPath, type Vec } from './geometry';
-import type { ArenaState } from './host';
+import { CENTER, type ArenaState } from './host';
 
 const FONT = '"Pixelify Sans", monospace';
 const INK = hexNum(P.ink);
@@ -334,7 +334,7 @@ export class ArenaScene extends Phaser.Scene {
       const [sx, sy] = SHRINES[slot % SHRINES.length];
       const inward = x < W / 2 ? 1 : -1;
       this.hint(x + inward * 120, y + 8, 'THIS IS YOU', 5200);
-      this.hint(sx, sy + (sy < H / 2 ? 88 : -96), 'YOUR BEACON', 7000);
+      this.hint(sx, sy + (sy < H / 2 ? 104 : -110), 'BANK LENSES HERE', 7000);
     }
   }
 
@@ -520,10 +520,26 @@ export class ArenaScene extends Phaser.Scene {
     const carry = this.session.state.carry[this.uid] ?? 0;
     for (const [id, shard] of Object.entries(shards)) {
       let sprite = this.shardSprites.get(id);
+      const flying = shard.born !== undefined && now - shard.born < TUNING.castFlightMs;
       if (!sprite) {
-        sprite = this.add.image(snap(shard.x), snap(shard.y), 'shard').setScale(ART).setDepth(3);
+        sprite = this.add.image(snap(shard.x), snap(shard.y), 'shard').setScale(ART).setDepth(flying ? 12 : 3);
         this.shardSprites.set(id, sprite);
-        this.pop(shard.x, shard.y, [P.lampL], 5);
+        if (flying) { this.pop(CENTER.x, CENTER.y, [P.lamp, P.lampL, P.brass], 14); this.sfx.cast(panFor(shard.x)); }
+        else this.pop(shard.x, shard.y, [P.lampL], 5);
+        sprite.setData('landed', !flying);
+      }
+      if (flying) {
+        const t = (now - shard.born!) / TUNING.castFlightMs;
+        const fx = CENTER.x + (shard.x - CENTER.x) * t;
+        const fy = CENTER.y + (shard.y - CENTER.y) * t - Math.sin(t * Math.PI) * 150;
+        sprite.setPosition(snap(fx), snap(fy)).setVisible(true).setAlpha(1);
+        if (Math.floor(now / 50) % 2) this.pop(fx, fy, [P.lamp], 1);
+        this.lightAt('light-small', fx, fy, 7);
+        continue;
+      }
+      if (!sprite.getData('landed')) {
+        sprite.setData('landed', true).setDepth(3);
+        this.pop(shard.x, shard.y, [P.lamp, P.stoneL], 10);
       }
       const locked = shard.lockUid === this.uid && now < (shard.lockUntil ?? 0);
       const bob = Math.floor(now / 420 + shard.x) % 2 ? ART : 0;
@@ -568,6 +584,27 @@ export class ArenaScene extends Phaser.Scene {
       this.session.pushFeed(`${mine ? 'You' : this.nameOf(uid)} banked ${gained}`, slot);
       if (mine) this.cameras.main.flash(90, 243, 207, 107);
     }
+    for (const [uid, score] of Object.entries(state.score)) {
+      if (score >= (prev.score[uid] ?? 0)) continue;
+      const slot = this.session.slotOf(uid);
+      const [x, y] = SHRINES[slot % SHRINES.length];
+      this.pop(x, y - 40, [P.rust, P.lamp], 18);
+      this.floater(x, y - 80, 'STOLEN', P.rust);
+      const thief = Object.keys(state.carry).find((u) => u !== uid && (state.carry[u] ?? 0) > (prev.carry[u] ?? 0));
+      if (thief) {
+        const mine = thief === this.uid && !this.quiet;
+        this.session.pushFeed(`${mine ? 'You' : this.nameOf(thief)} stole a lens from ${uid === this.uid && !this.quiet ? 'you' : this.nameOf(uid)}`, this.session.slotOf(thief));
+        if (mine) { this.floater(this.me.x, this.me.y - 80, 'STOLE 1', P.lamp); this.sfx.pickup(3, 0); this.lastPickupSound = now; }
+      }
+    }
+    if (state.winner && !prev.winner) {
+      const slot = this.session.slotOf(state.winner);
+      const [x, y] = SHRINES[slot % SHRINES.length];
+      const k = keeperOf(slot);
+      this.pop(x, y - 40, [k.cloak, P.lamp, P.lampL, P.parchment], 90);
+      this.floater(x, y - 110, 'LIGHTHOUSE LIT', P.lamp);
+      if (!this.quiet) this.cameras.main.flash(260, 251, 236, 192);
+    }
     const mineCarry = state.carry[this.uid] ?? 0;
     if (mineCarry > (prev.carry[this.uid] ?? 0) && now - this.lastPickupSound > 600) this.sfx.pickup(mineCarry, 0);
   }
@@ -597,7 +634,7 @@ export class ArenaScene extends Phaser.Scene {
       a.facing = facing;
       const stunned = now < pos.s;
       const frame = moving && !stunned && Math.floor(now / 140) % 2 ? 1 : 0;
-      a.body.setTexture(`keeper-${a.slot}-${frame}`).setFlipX(facing < 0).setPosition(snap(pos.x), snap(pos.y) - (frame ? ART : 0));
+      a.body.setTexture(`keeper-${a.slot}-${frame}`).setFlipX(facing < 0).setPosition(snap(pos.x), snap(pos.y) - (frame ? ART : 0)).setAngle(stunned ? -facing * 90 : 0);
       const blink = stunned ? Math.floor(now / 80) % 2 === 0 : mine && now < this.me.immuneUntil && Math.floor(now / 120) % 2 === 0;
       if (blink) a.body.setTintFill(hexNum(P.parchment)); else a.body.clearTint();
       a.body.setAlpha(player.connected ? 1 : 0.4);
@@ -664,7 +701,19 @@ export class ArenaScene extends Phaser.Scene {
       const [x, y] = SHRINES[slot % SHRINES.length];
       const score = this.session.state.score[b.uid] ?? 0;
       if (Math.floor(now / 160 + slot) % 7 !== 0) this.lightAt('light-beacon', x, y - 24, 18);
-      b.label.setText(`${b.uid === this.uid && !this.quiet ? 'YOURS' : this.nameOf(b.uid)} ${score}`);
+      b.label.setText(b.uid === this.uid && !this.quiet ? 'YOUR BEACON' : this.nameOf(b.uid));
+      const o = this.overlay;
+      const cells = TUNING.winScore;
+      const step = ART + 2;
+      const total = cells * step - 2;
+      const gx = snap(x - total / 2);
+      const gy = y + 50;
+      const near = score >= cells - 3 && Math.floor(now / 250) % 2 === 0;
+      o.fillStyle(near ? hexNum(P.rust) : INK, 1).fillRect(gx - ART, gy - ART, total + ART * 2, ART * 4);
+      for (let i = 0; i < cells; i++) {
+        o.fillStyle(i < score ? hexNum(keeperOf(slot).cloak) : hexNum(P.ink2), 1).fillRect(gx + i * step, gy, ART, ART * 2);
+        if (i < score) o.fillStyle(LAMP_L, 1).fillRect(gx + i * step, gy, ART, 2);
+      }
     }
   }
 

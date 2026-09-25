@@ -114,6 +114,10 @@ export const sfx = {
       tone({ type: 'sine', f0: notes[i] * 2, dur: 0.25, vol: vol * 0.4, delay: i * 0.06 + 0.02, pan });
     }
   },
+  cast(pan = 0) {
+    tone({ type: 'sine', f0: 320, f1: 1400, dur: 0.5, vol: 0.06, pan, lowpass: 2600 });
+    tone({ type: 'triangle', f0: 1900, f1: 2400, dur: 0.18, vol: 0.03, delay: 0.42, pan });
+  },
   drop(pan = 0) {
     for (let i = 0; i < 4; i++) tone({ type: 'sine', f0: 1500 - i * 220, f1: 700 - i * 100, dur: 0.12, vol: 0.06, delay: i * 0.04, pan });
   },
