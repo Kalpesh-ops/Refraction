@@ -1,14 +1,14 @@
 import { serverNow } from '../firebase';
 import { SHRINES, SPAWNS, TUNING } from '../game/constants';
-import { dist, resolveCircle, sweepHits, traceBolt, type BoltPath } from '../game/geometry';
+import { dist, echoAt, resolveCircle, sweepHits, traceBolt, type BoltPath, type Vec } from '../game/geometry';
 import { applyHit, createArenaState, hostStep, type ArenaState, type HostPlayer } from '../game/host';
-import type { Hit, Match, Player, PosSample, RoomMeta, Shot } from '../types';
+import type { Hit, Look, Match, Player, PosSample, RoomMeta, Shot } from '../types';
 import { SessionExtras, type GameSession, type SessionKind } from './types';
 
 const BOT_NAMES = ['Ivo', 'Mara', 'Tamsin', 'Oren', 'Wren'];
 
 interface Bot {
-  id: string; slot: number; name: string;
+  id: string; slot: number; seat: number; name: string;
   x: number; y: number; a: number; vx: number; vy: number;
   stunnedUntil: number; immuneUntil: number; lastFire: number; gap: number;
   wanderUntil: number; wanderAngle: number; slowSince: number;
@@ -40,22 +40,25 @@ export class LocalSession implements GameSession {
   private seq = 0;
   private last = 0;
   private readonly easy: boolean;
+  /** The human's own path, for their echo. */
+  private trail: PosSample[] = [];
 
-  constructor(readonly kind: Exclude<SessionKind, 'online'>, humanName?: string) {
+  constructor(readonly kind: Exclude<SessionKind, 'online'>, humanName?: string, look: Look = { slot: 0, figure: 0 }) {
     this.easy = kind === 'practice';
     this.uid = humanName ? 'you' : 'viewer';
     this.code = kind === 'practice' ? 'PRACTICE' : 'DEMO';
     const players: Record<string, Player> = {};
-    if (humanName) players[this.uid] = { id: this.uid, name: humanName, slot: 0, joinedAt: 0, connected: true };
+    const human = humanName ? look.slot : -1;
+    if (humanName) players[this.uid] = { id: this.uid, name: humanName, slot: human, figure: look.figure, joinedAt: 0, connected: true };
     const botCount = kind === 'practice' ? 2 : 3;
+    const free = [0, 1, 2, 3, 4, 5].filter((s) => s !== human);
     for (let i = 0; i < botCount; i++) {
-      const slot = humanName ? i + 1 : i;
       const id = `bot-${i}`;
-      players[id] = { id, name: BOT_NAMES[i], slot, joinedAt: 0, connected: true };
+      players[id] = { id, name: BOT_NAMES[i], slot: free[i], figure: (i + 1) % 4, joinedAt: 0, connected: true };
     }
     this.meta = { code: this.code, hostUid: this.uid, status: 'playing', createdAt: Date.now(), players };
     this.state = createArenaState([], 0);
-    this.newRound(0);
+    this.newRound(1);
     this.timer = window.setInterval(() => this.tick(), 50);
   }
 
@@ -67,6 +70,8 @@ export class LocalSession implements GameSession {
   get status() { return this.meta.status; }
   get match(): Match | undefined { return this.meta.match; }
   slotOf(uid: string) { return this.meta.players[uid]?.slot ?? 0; }
+  seatOf(uid: string) { return this.meta.match?.seats?.[uid] ?? 0; }
+  figureOf(uid: string) { return this.meta.players[uid]?.figure ?? 0; }
   subscribe(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   private bump() { this.version++; this.listeners.forEach((fn) => fn()); }
 
@@ -74,18 +79,25 @@ export class LocalSession implements GameSession {
     const now = serverNow();
     const lead = this.kind === 'practice' ? 2500 : 600;
     const length = this.kind === 'practice' ? 15 * 60_000 : 75_000;
-    this.meta = { ...this.meta, status: 'playing', match: { round, startsAt: now + lead, endsAt: now + lead + length } };
+    const seats = Object.fromEntries(Object.keys(this.meta.players).map((id, i) => [id, i]));
+    this.meta = { ...this.meta, status: 'playing', match: { round, startsAt: now + lead, endsAt: now + lead + length, seats } };
     this.state = createArenaState(Object.keys(this.meta.players), now);
     this.bolts.clear();
     this.positions.clear();
+    this.trail = [];
     this.bots = Object.values(this.meta.players).filter((p) => p.id !== this.uid).map((p) => {
-      const [x, y] = SPAWNS[p.slot];
-      return { id: p.id, slot: p.slot, name: p.name, x, y, a: Math.atan2(360 - y, 640 - x), vx: 0, vy: 0, stunnedUntil: 0, immuneUntil: 0, lastFire: now + Math.random() * 1500, gap: 1500, wanderUntil: 0, wanderAngle: 0, slowSince: 0 };
+      const seat = seats[p.id];
+      const [x, y] = SPAWNS[seat];
+      return { id: p.id, slot: p.slot, seat, name: p.name, x, y, a: Math.atan2(360 - y, 640 - x), vx: 0, vy: 0, stunnedUntil: 0, immuneUntil: 0, lastFire: now + Math.random() * 1500, gap: 1500, wanderUntil: 0, wanderAngle: 0, slowSince: 0 };
     });
     this.bump();
   }
 
-  publishPos(sample: PosSample) { this.localPos = sample; }
+  publishPos(sample: PosSample) {
+    this.localPos = sample;
+    this.trail.push(sample);
+    while (this.trail.length > 2 && this.trail[0].t < sample.t - TUNING.echoDelayMs - 1500) this.trail.shift();
+  }
 
   fire(shot: Omit<Shot, 'o'>) {
     const id = `s${this.seq++}`;
@@ -134,16 +146,21 @@ export class LocalSession implements GameSession {
         const d = Math.min(((now - b.t0) * TUNING.boltSpeed) / 1000, b.path.length);
         if (now >= bot.immuneUntil && sweepHits(b.path, b.checked, d, bot, TUNING.runnerRadius + TUNING.boltRadius)) {
           b.done = true;
-          bot.stunnedUntil = now + TUNING.stunMs;
-          bot.immuneUntil = now + TUNING.immuneMs;
-          const k = TUNING.knockback / Math.max(1, dist(bot, b.path.points[0]));
-          bot.vx = (bot.x - b.path.points[0].x) * k;
-          bot.vy = (bot.y - b.path.points[0].y) * k;
-          applyHit(this.state, bot.id, b.owner, bot, now);
+          this.catchBot(bot, b.path.points[0], b.owner, b.sid, b.echo, now);
           changed = true;
-          const hit: Hit = { v: bot.id, by: b.owner, sid: b.sid, echo: b.echo, x: Math.round(bot.x), y: Math.round(bot.y), t: now };
-          this.onHit?.(`h${this.seq++}`, hit);
-          if (b.owner === this.uid) this.flag('stunned');
+        }
+      }
+
+      // Walking into someone else's echo catches you too.
+      if (live && now >= bot.immuneUntil) {
+        for (const [uid] of this.targets()) {
+          if (uid === bot.id) continue;
+          const echo = echoAt(uid === this.uid ? this.trail : this.positions.get(uid), now, match.startsAt);
+          if (echo?.live && dist(bot, echo.pos) < TUNING.echoTouchRadius) {
+            this.catchBot(bot, echo.pos, uid, 'touch', true, now);
+            changed = true;
+            break;
+          }
         }
       }
 
@@ -160,8 +177,8 @@ export class LocalSession implements GameSession {
 
     if (live) {
       const players: Record<string, HostPlayer> = {};
-      for (const bot of this.bots) players[bot.id] = { x: bot.x, y: bot.y, stunnedUntil: bot.stunnedUntil, slot: bot.slot };
-      if (this.localPos && this.uid in this.state.score) players[this.uid] = { x: this.localPos.x, y: this.localPos.y, stunnedUntil: this.localPos.s, slot: this.slotOf(this.uid) };
+      for (const bot of this.bots) players[bot.id] = { x: bot.x, y: bot.y, stunnedUntil: bot.stunnedUntil, slot: bot.seat };
+      if (this.localPos && this.uid in this.state.score) players[this.uid] = { x: this.localPos.x, y: this.localPos.y, stunnedUntil: this.localPos.s, slot: this.seatOf(this.uid) };
       const step = hostStep(this.state, players, now);
       for (const e of step.events) {
         if (e.uid === this.uid) this.flag(e.type === 'bank' ? 'banked' : 'picked');
@@ -177,9 +194,21 @@ export class LocalSession implements GameSession {
     if (changed) { this.state = structuredClone(this.state); this.bump(); }
   }
 
+  private catchBot(bot: Bot, from: Vec, by: string, sid: string, echo: boolean, now: number) {
+    bot.stunnedUntil = now + TUNING.stunMs;
+    bot.immuneUntil = now + TUNING.immuneMs;
+    const k = TUNING.knockback / Math.max(1, dist(bot, from));
+    bot.vx = (bot.x - from.x) * k;
+    bot.vy = (bot.y - from.y) * k;
+    applyHit(this.state, bot.id, by, bot, now);
+    const hit: Hit = { v: bot.id, by, sid, echo, x: Math.round(bot.x), y: Math.round(bot.y), t: now };
+    this.onHit?.(`h${this.seq++}`, hit);
+    if (by === this.uid) this.flag('stunned');
+  }
+
   private steer(bot: Bot, now: number, dt: number) {
     const carry = this.state.carry[bot.id] ?? 0;
-    const [bx, by] = SHRINES[bot.slot];
+    const [bx, by] = SHRINES[bot.seat];
     const remaining = this.meta.match!.endsAt - now;
     let target: { x: number; y: number } = { x: 640, y: 360 };
     if (carry >= (this.easy ? 2 : 3) || (carry > 0 && remaining < 12_000)) target = { x: bx, y: by };

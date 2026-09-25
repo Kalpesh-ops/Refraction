@@ -1,3 +1,4 @@
+import type { PosSample } from '../types';
 import { BORDER, H, OBSTACLES, TUNING, W, type Segment, type Surface } from './constants';
 
 export interface Vec { x: number; y: number }
@@ -140,4 +141,33 @@ export function sweepHits(path: BoltPath, d0: number, d1: number, c: Vec, r: num
     if (dist(pointAt(path, Math.min(d, to)), c) < r) return true;
   }
   return false;
+}
+
+const lerpAngle = (a: number, b: number, k: number) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
+
+/** Interpolated sample at time `t` from a buffer ordered oldest first. */
+export function sampleAt(buf: PosSample[], t: number): PosSample | undefined {
+  if (!buf.length) return undefined;
+  if (t <= buf[0].t) return buf[0];
+  for (let i = buf.length - 1; i > 0; i--) {
+    const a = buf[i - 1];
+    const b = buf[i];
+    if (t >= a.t && t <= b.t) {
+      const k = (t - a.t) / (b.t - a.t || 1);
+      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, a: lerpAngle(a.a, b.a, k), t, s: b.s };
+    }
+  }
+  return buf[buf.length - 1];
+}
+
+/**
+ * Where a keeper's echo stands and whether it can catch: it walks their path echoDelayMs behind,
+ * and is harmless while retracing moments they spent knocked flat, or before the round has run that long.
+ */
+export function echoAt(buf: PosSample[] | undefined, now: number, roundStart: number): { pos: PosSample; live: boolean } | null {
+  const t = now - TUNING.echoDelayMs;
+  if (!buf || t < roundStart) return null;
+  const pos = sampleAt(buf, t);
+  if (!pos) return null;
+  return { pos, live: pos.s <= pos.t };
 }

@@ -11,6 +11,8 @@ export const TUNING = {
   maxBounces: 5,
   fireCooldownMs: 430,
   echoDelayMs: 3000,
+  /** Walking into another keeper's echo catches you, like a beam. */
+  echoTouchRadius: 30,
   stunMs: 1400,
   immuneMs: 2300,
   knockback: 260,

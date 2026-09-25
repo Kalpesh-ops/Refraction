@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { H, OBSTACLES, SHRINES, SPAWNS, TUNING, W } from './constants';
-import { blocked, pointAt, resolveCircle, sweepHits, traceBolt } from './geometry';
+import { blocked, echoAt, pointAt, resolveCircle, sweepHits, traceBolt } from './geometry';
 import { applyHit, createArenaState, hostStep, normalizeState, shardTarget, standings } from './host';
 
 const seeded = (seed = 1) => () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
@@ -159,5 +159,26 @@ describe('host rules', () => {
   });
   it('restores empty collections dropped by Firebase', () => {
     expect(normalizeState({ nextId: 4 })).toMatchObject({ shards: {}, carry: {}, score: {}, nextId: 4 });
+  });
+});
+
+describe('echo', () => {
+  const trail = [
+    { x: 100, y: 100, a: 0, t: 1000, s: 0 },
+    { x: 200, y: 100, a: 0, t: 2000, s: 0 },
+    { x: 300, y: 100, a: 0, t: 3000, s: 3400 },
+    { x: 300, y: 100, a: 0, t: 4000, s: 3400 },
+  ];
+  it('walks the path echoDelayMs behind', () => {
+    const e = echoAt(trail, 1500 + TUNING.echoDelayMs, 0);
+    expect(e?.pos.x).toBeCloseTo(150);
+    expect(e?.live).toBe(true);
+  });
+  it('does not exist until the round has run for echoDelayMs', () => {
+    expect(echoAt(trail, 1500 + TUNING.echoDelayMs, 2000)).toBeNull();
+  });
+  it('is harmless while retracing a knockdown', () => {
+    expect(echoAt(trail, 3200 + TUNING.echoDelayMs, 0)?.live).toBe(false);
+    expect(echoAt(trail, 3900 + TUNING.echoDelayMs, 0)?.live).toBe(true);
   });
 });

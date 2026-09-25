@@ -16,6 +16,7 @@ export interface ArenaState {
   winner?: string;
 }
 
+/** `slot` here is the keeper's beacon index for the round (their seat). */
 export interface HostPlayer { x: number; y: number; stunnedUntil: number; slot: number }
 
 export type HostEvent =

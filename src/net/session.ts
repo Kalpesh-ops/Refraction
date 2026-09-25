@@ -2,7 +2,7 @@ import { get, onChildAdded, onDisconnect, onValue, push, ref, set, update, type 
 import { firebaseClient, serverNow } from '../firebase';
 import { TUNING } from '../game/constants';
 import { applyHit, createArenaState, hostStep, normalizeState, type ArenaState, type HostEvent, type HostPlayer } from '../game/host';
-import type { Hit, Match, Player, PosSample, RoomMeta, RoomStatus, Shot } from '../types';
+import type { Hit, Look, Match, Player, PosSample, RoomMeta, RoomStatus, Shot } from '../types';
 import { SessionExtras, type GameSession } from './types';
 
 // Letters only, minus the ones the pixel font makes easy to misread (B/8, I/1, O/0, Q, S/5, Z/2).
@@ -11,11 +11,13 @@ const MAX_PLAYERS = 6;
 const POS_BUFFER_MS = TUNING.echoDelayMs + 1500;
 
 const generateCode = () => Array.from({ length: 5 }, () => ROOM_CODE_ALPHABET[Math.floor(Math.random() * ROOM_CODE_ALPHABET.length)]).join('');
-const freeSlot = (players: Record<string, Player>) => {
+const freeSlot = (players: Record<string, Player>, preferred = -1) => {
   const used = new Set(Object.values(players).map((p) => p.slot));
+  if (preferred >= 0 && preferred < MAX_PLAYERS && !used.has(preferred)) return preferred;
   for (let i = 0; i < MAX_PLAYERS; i++) if (!used.has(i)) return i;
   return -1;
 };
+
 
 type Listener = () => void;
 
@@ -59,20 +61,20 @@ export class Session implements GameSession {
     this.code = code;
   }
 
-  static async create(name: string) {
+  static async create(name: string, look: Look = { slot: 0, figure: 0 }) {
     const client = await firebaseClient();
     let code = generateCode();
     for (let i = 0; i < 6; i++) {
       if (!(await get(ref(client.db, `rooms/${code}/hostUid`))).exists()) break;
       code = generateCode();
     }
-    const player: Player = { id: client.uid, name, slot: 0, joinedAt: Date.now(), connected: true };
+    const player: Player = { id: client.uid, name, slot: freeSlot({}, look.slot), figure: look.figure, joinedAt: Date.now(), connected: true };
     const meta: RoomMeta = { code, hostUid: client.uid, status: 'lobby', createdAt: Date.now(), players: { [client.uid]: player } };
     await set(ref(client.db, `rooms/${code}`), meta);
     return new Session(client.db, client.uid, code).connect();
   }
 
-  static async join(code: string, name: string) {
+  static async join(code: string, name: string, look: Look = { slot: -1, figure: 0 }) {
     const client = await firebaseClient();
     const [hostSnap, playersSnap, statusSnap] = await Promise.all([
       get(ref(client.db, `rooms/${code}/hostUid`)),
@@ -86,9 +88,9 @@ export class Session implements GameSession {
       await update(ref(client.db, `rooms/${code}/players/${client.uid}`), { name, connected: true });
     } else {
       if (statusSnap.val() !== 'lobby') throw new Error('That match already started. Wait for the next round.');
-      const slot = freeSlot(players);
+      const slot = freeSlot(players, look.slot);
       if (slot < 0) throw new Error('That room is full.');
-      const player: Player = { id: client.uid, name, slot, joinedAt: Date.now(), connected: true };
+      const player: Player = { id: client.uid, name, slot, figure: look.figure, joinedAt: Date.now(), connected: true };
       await set(ref(client.db, `rooms/${code}/players/${client.uid}`), player);
     }
     return new Session(client.db, client.uid, code).connect();
@@ -161,6 +163,15 @@ export class Session implements GameSession {
   get status(): RoomStatus | undefined { return this.meta?.status; }
   get match(): Match | undefined { return this.meta?.match; }
   slotOf(uid: string) { return this.meta?.players[uid]?.slot ?? 0; }
+  seatOf(uid: string) { return this.meta?.match?.seats?.[uid] ?? this.slotOf(uid); }
+  figureOf(uid: string) { return this.meta?.players[uid]?.figure ?? 0; }
+
+  /** Lobby only. A colour someone else wears is refused. */
+  async setLook(look: Look) {
+    const players = this.meta?.players ?? {};
+    if (Object.values(players).some((p) => p.id !== this.uid && p.slot === look.slot)) return;
+    await update(this.path(`players/${this.uid}`), { slot: look.slot, figure: look.figure });
+  }
 
   /** Publishes our position at ~20 Hz, or immediately when stunned state changes. */
   publishPos(sample: PosSample, force = false) {
@@ -190,7 +201,8 @@ export class Session implements GameSession {
     const players = Object.values(this.meta.players).filter((p) => p.connected);
     if (players.length < 2) throw new Error('Refraction needs at least two connected players.');
     const now = serverNow();
-    const match: Match = { round: (this.meta.match?.round ?? 0) + 1, startsAt: now + TUNING.countdownMs, endsAt: now + TUNING.countdownMs + TUNING.roundMs };
+    const seats = Object.fromEntries([...players].sort((a, b) => a.slot - b.slot).map((p, i) => [p.id, i]));
+    const match: Match = { round: (this.meta.match?.round ?? 0) + 1, startsAt: now + TUNING.countdownMs, endsAt: now + TUNING.countdownMs + TUNING.roundMs, seats };
     const state = createArenaState(players.map((p) => p.id), now);
     this.processedHits.clear();
     this.pendingHits.length = 0;
@@ -252,7 +264,7 @@ export class Session implements GameSession {
       for (const p of Object.values(this.meta.players)) {
         if (!(p.id in state.score)) continue;
         const pos = this.latest(p.id);
-        if (pos) players[p.id] = { x: pos.x, y: pos.y, stunnedUntil: pos.s, slot: p.slot };
+        if (pos) players[p.id] = { x: pos.x, y: pos.y, stunnedUntil: pos.s, slot: this.seatOf(p.id) };
       }
       const step = hostStep(state, players, now);
       if (step.changed) this.dirty = true;

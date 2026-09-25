@@ -2,12 +2,12 @@ import Phaser from 'phaser';
 import { panFor, sfx } from '../audio/sfx';
 import { AH, ART, AW, paintArena } from '../art/floor';
 import { KEEPERS, P, hexNum, keeperOf } from '../art/palette';
-import { SHARD, beaconSprite, ghostSprite, keeperSprite, paintCanvas, type SpriteDef } from '../art/sprites';
+import { FIGURES, SHARD, beaconSprite, ghostSprite, keeperSprite, paintCanvas, type SpriteDef } from '../art/sprites';
 import { serverNow } from '../firebase';
 import type { GameSession } from '../net/types';
 import type { Hit, PosSample, Shot } from '../types';
 import { H, OBSTACLES, SHRINES, SPAWNS, TUNING, W } from './constants';
-import { dist, pointAt, resolveCircle, sweepHits, traceBolt, type BoltPath, type Vec } from './geometry';
+import { dist, echoAt, pointAt, resolveCircle, sampleAt, sweepHits, traceBolt, type BoltPath, type Vec } from './geometry';
 import { CENTER, type ArenaState } from './host';
 
 const FONT = '"Pixelify Sans", monospace';
@@ -19,25 +19,10 @@ interface Bolt {
   stopD: number | null; checkedD: number; nextBounce: number; started: boolean; ended: boolean;
 }
 
-interface Avatar { body: Phaser.GameObjects.Image; ghost: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text; slot: number; lastX: number; lastY: number; facing: 1 | -1 }
+interface Avatar { body: Phaser.GameObjects.Image; ghost: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text; slot: number; figure: number; lastX: number; lastY: number; facing: 1 | -1 }
 interface Stick { id: number; bx: number; by: number; x: number; y: number }
 
 const snap = (v: number) => Math.floor(v / ART) * ART;
-const lerpAngle = (a: number, b: number, k: number) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
-
-function sampleAt(buf: PosSample[], t: number): PosSample | undefined {
-  if (!buf.length) return undefined;
-  if (t <= buf[0].t) return buf[0];
-  for (let i = buf.length - 1; i > 0; i--) {
-    const a = buf[i - 1];
-    const b = buf[i];
-    if (t >= a.t && t <= b.t) {
-      const k = (t - a.t) / (b.t - a.t || 1);
-      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, a: lerpAngle(a.a, b.a, k), t, s: b.s };
-    }
-  }
-  return buf[buf.length - 1];
-}
 
 export class ArenaScene extends Phaser.Scene {
   private session!: GameSession;
@@ -109,9 +94,11 @@ export class ArenaScene extends Phaser.Scene {
   private makeTextures() {
     if (!this.textures.exists('arena')) this.textures.addCanvas('arena', paintArena());
     KEEPERS.forEach((_, slot) => {
-      this.addSprite(`keeper-${slot}-0`, keeperSprite(slot, 0));
-      this.addSprite(`keeper-${slot}-1`, keeperSprite(slot, 1));
-      this.addSprite(`ghost-${slot}`, ghostSprite(slot));
+      FIGURES.forEach((_f, figure) => {
+        this.addSprite(`keeper-${slot}-${figure}-0`, keeperSprite(slot, 0, figure));
+        this.addSprite(`keeper-${slot}-${figure}-1`, keeperSprite(slot, 1, figure));
+        this.addSprite(`ghost-${slot}-${figure}`, ghostSprite(slot, figure));
+      });
       this.addSprite(`beacon-${slot}`, beaconSprite(slot, true));
     });
     this.addSprite('shard', SHARD);
@@ -249,15 +236,21 @@ export class ArenaScene extends Phaser.Scene {
   private gotHit(b: Bolt, d: number, now: number) {
     const a = pointAt(b.path, Math.max(0, d - 12));
     const c = pointAt(b.path, d);
-    const len = Math.hypot(c.x - a.x, c.y - a.y) || 1;
     b.stopD = d;
+    this.caught(b.owner, b.echo ? b.id.slice(0, -2) : b.id, b.echo, c.x - a.x, c.y - a.y, now);
+  }
+
+  /** Caught by a beam, or by walking into an echo: knocked flat and back along (dx, dy). */
+  private caught(by: string, sid: string, echo: boolean, dx: number, dy: number, now: number) {
+    const len = Math.hypot(dx, dy) || 1;
     this.me.stunnedUntil = now + TUNING.stunMs;
     this.me.immuneUntil = now + TUNING.immuneMs;
-    this.me.vx = ((c.x - a.x) / len) * TUNING.knockback;
-    this.me.vy = ((c.y - a.y) / len) * TUNING.knockback;
-    this.session.reportHit({ by: b.owner, sid: b.echo ? b.id.slice(0, -2) : b.id, echo: b.echo, x: Math.round(this.me.x), y: Math.round(this.me.y), t: now });
+    this.me.vx = (dx / len) * TUNING.knockback;
+    this.me.vy = (dy / len) * TUNING.knockback;
+    this.session.reportHit({ by, sid, echo, x: Math.round(this.me.x), y: Math.round(this.me.y), t: now });
     this.session.publishPos({ x: this.me.x, y: this.me.y, a: this.me.aim, t: now, s: this.me.stunnedUntil }, true);
-    if (this.session.kind !== 'online') this.session.pushFeed(`${this.nameOf(b.owner)}${b.echo ? "'s echo caught" : ' caught'} you`, this.session.slotOf(b.owner));
+    if (this.session.kind !== 'online') this.session.pushFeed(`${this.nameOf(by)}${echo ? "'s echo caught" : ' caught'} you`, this.session.slotOf(by));
+    if (sid === 'touch') this.floater(this.me.x, this.me.y - 80, 'WALKED INTO AN ECHO', P.rust);
     this.cameras.main.shake(200, 0.01);
     this.cameras.main.flash(120, 176, 74, 51);
     const k = keeperOf(this.session.slotOf(this.uid));
@@ -302,15 +295,16 @@ export class ArenaScene extends Phaser.Scene {
     return buf ? sampleAt(buf, serverNow() - delay) : undefined;
   }
 
-  private avatar(uid: string, slot: number, name: string): Avatar {
+  private avatar(uid: string, slot: number, figure: number, name: string): Avatar {
     let a = this.avatars.get(uid);
-    if (a) return a;
+    if (a && a.slot === slot && a.figure === figure) return a;
+    if (a) { a.body.destroy(); a.ghost.destroy(); a.label.destroy(); }
     const mine = uid === this.uid && !this.quiet;
     a = {
-      ghost: this.add.image(0, 0, `ghost-${slot}`).setScale(ART).setOrigin(0.44, 0.6).setDepth(4).setAlpha(0.85),
-      body: this.add.image(0, 0, `keeper-${slot}-0`).setScale(ART).setOrigin(0.44, 0.6).setDepth(5),
+      ghost: this.add.image(0, 0, `ghost-${slot}-${figure}`).setScale(ART).setOrigin(0.44, 0.6).setDepth(4).setAlpha(0.85),
+      body: this.add.image(0, 0, `keeper-${slot}-${figure}-0`).setScale(ART).setOrigin(0.44, 0.6).setDepth(5),
       label: this.add.text(0, 0, mine ? 'YOU' : name, { fontFamily: FONT, fontSize: '14px', color: mine ? P.ink : P.parchment, backgroundColor: mine ? P.lamp : P.ink, padding: { x: 4, y: 1 } }).setOrigin(0.5, 1).setDepth(11),
-      slot, lastX: 0, lastY: 0, facing: 1,
+      slot, figure, lastX: 0, lastY: 0, facing: 1,
     };
     this.avatars.set(uid, a);
     return a;
@@ -318,8 +312,8 @@ export class ArenaScene extends Phaser.Scene {
 
   private resetRound(round: number) {
     this.round = round;
-    const slot = this.session.slotOf(this.uid);
-    const [x, y] = SPAWNS[slot % SPAWNS.length];
+    const seat = this.session.seatOf(this.uid);
+    const [x, y] = SPAWNS[seat % SPAWNS.length];
     this.me = { x, y, aim: Math.atan2(360 - y, 640 - x), vx: 0, vy: 0, stunnedUntil: 0, immuneUntil: 0, lastFire: 0, walked: 0, firstShot: 0 };
     this.history = [];
     this.bolts.clear();
@@ -331,7 +325,7 @@ export class ArenaScene extends Phaser.Scene {
     this.shardSprites.forEach((sp) => sp.destroy());
     this.shardSprites.clear();
     if (!this.quiet && this.uid in this.session.state.score) {
-      const [sx, sy] = SHRINES[slot % SHRINES.length];
+      const [sx, sy] = SHRINES[seat % SHRINES.length];
       const inward = x < W / 2 ? 1 : -1;
       this.hint(x + inward * 120, y + 8, 'THIS IS YOU', 5200);
       this.hint(sx, sy + (sy < H / 2 ? 104 : -110), 'BANK LENSES HERE', 7000);
@@ -340,13 +334,13 @@ export class ArenaScene extends Phaser.Scene {
 
   private buildBeacons() {
     const uids = Object.keys(this.session.state.score).sort();
-    const key = uids.map((u) => `${u}:${this.session.slotOf(u)}`).join('|');
+    const key = uids.map((u) => `${u}:${this.session.slotOf(u)}:${this.session.seatOf(u)}`).join('|');
     if (key === this.beaconKey) return;
     this.beaconKey = key;
     this.beacons.forEach((b) => { b.img.destroy(); b.label.destroy(); });
     this.beacons = uids.map((uid) => {
       const slot = this.session.slotOf(uid);
-      const [x, y] = SHRINES[slot % SHRINES.length];
+      const [x, y] = SHRINES[this.session.seatOf(uid) % SHRINES.length];
       return {
         uid,
         img: this.add.image(x, y + 8, `beacon-${slot}`).setScale(ART).setOrigin(0.5, 0.86).setDepth(3),
@@ -399,6 +393,17 @@ export class ArenaScene extends Phaser.Scene {
         if (Math.hypot(dx, dy) > 14) this.me.aim = Math.atan2(dy, dx);
       } else if (!this.touch && this.mouse.active) {
         this.me.aim = Math.atan2(this.mouse.y - this.me.y, this.mouse.x - this.me.x);
+      }
+
+      if (live && !stunned && now >= this.me.immuneUntil) {
+        for (const uid of Object.keys(s.state.score)) {
+          if (uid === this.uid) continue;
+          const echo = echoAt(s.positions.get(uid), now, match.startsAt);
+          if (echo?.live && dist(this.me, echo.pos) < TUNING.echoTouchRadius) {
+            this.caught(uid, 'touch', true, this.me.x - echo.pos.x, this.me.y - echo.pos.y, now);
+            break;
+          }
+        }
       }
 
       const wantsFire = this.fireQueued || this.mouse.down || Boolean(this.keys?.SPACE.isDown);
@@ -575,7 +580,7 @@ export class ArenaScene extends Phaser.Scene {
       const gained = score - (prev.score[uid] ?? 0);
       if (gained <= 0) continue;
       const slot = this.session.slotOf(uid);
-      const [x, y] = SHRINES[slot % SHRINES.length];
+      const [x, y] = SHRINES[this.session.seatOf(uid) % SHRINES.length];
       const k = keeperOf(slot);
       const mine = uid === this.uid && !this.quiet;
       this.pop(x, y - 40, [k.cloak, P.lamp, P.lampL], 24 + gained * 8);
@@ -586,8 +591,7 @@ export class ArenaScene extends Phaser.Scene {
     }
     for (const [uid, score] of Object.entries(state.score)) {
       if (score >= (prev.score[uid] ?? 0)) continue;
-      const slot = this.session.slotOf(uid);
-      const [x, y] = SHRINES[slot % SHRINES.length];
+      const [x, y] = SHRINES[this.session.seatOf(uid) % SHRINES.length];
       this.pop(x, y - 40, [P.rust, P.lamp], 18);
       this.floater(x, y - 80, 'STOLEN', P.rust);
       const thief = Object.keys(state.carry).find((u) => u !== uid && (state.carry[u] ?? 0) > (prev.carry[u] ?? 0));
@@ -598,9 +602,8 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
     if (state.winner && !prev.winner) {
-      const slot = this.session.slotOf(state.winner);
-      const [x, y] = SHRINES[slot % SHRINES.length];
-      const k = keeperOf(slot);
+      const [x, y] = SHRINES[this.session.seatOf(state.winner) % SHRINES.length];
+      const k = keeperOf(this.session.slotOf(state.winner));
       this.pop(x, y - 40, [k.cloak, P.lamp, P.lampL, P.parchment], 90);
       this.floater(x, y - 110, 'LIGHTHOUSE LIT', P.lamp);
       if (!this.quiet) this.cameras.main.flash(260, 251, 236, 192);
@@ -616,15 +619,15 @@ export class ArenaScene extends Phaser.Scene {
     for (const uid of Object.keys(s.state.score)) {
       const player = s.meta!.players[uid];
       if (!player) continue;
-      const a = this.avatar(uid, player.slot, player.name);
+      const a = this.avatar(uid, player.slot, player.figure ?? 0, player.name);
       const mine = uid === this.uid && !this.quiet;
       const pos = mine ? s.localPos : this.remotePos(uid);
-      const echoPos = mine ? sampleAt(this.history, now - TUNING.echoDelayMs) : this.remotePos(uid, TUNING.echoDelayMs);
+      const echo = echoAt(mine ? this.history : s.positions.get(uid), now, s.match?.startsAt ?? 0);
       a.body.setVisible(Boolean(pos));
       a.label.setVisible(Boolean(pos));
-      const echoVisible = Boolean(echoPos) && now > (s.match?.startsAt ?? 0) + TUNING.echoDelayMs;
-      a.ghost.setVisible(echoVisible);
-      if (echoPos && echoVisible) a.ghost.setPosition(snap(echoPos.x), snap(echoPos.y)).setFlipX(Math.cos(echoPos.a) < 0);
+      a.ghost.setVisible(Boolean(echo));
+      // A live echo flickers faintly; one retracing a knockdown is dim and harmless.
+      if (echo) a.ghost.setPosition(snap(echo.pos.x), snap(echo.pos.y)).setFlipX(Math.cos(echo.pos.a) < 0).setAlpha(echo.live ? (Math.floor(now / 110) % 5 ? 0.9 : 0.6) : 0.3);
       if (!pos) continue;
 
       const moving = Math.hypot(pos.x - a.lastX, pos.y - a.lastY) > 0.4;
@@ -634,7 +637,7 @@ export class ArenaScene extends Phaser.Scene {
       a.facing = facing;
       const stunned = now < pos.s;
       const frame = moving && !stunned && Math.floor(now / 140) % 2 ? 1 : 0;
-      a.body.setTexture(`keeper-${a.slot}-${frame}`).setFlipX(facing < 0).setPosition(snap(pos.x), snap(pos.y) - (frame ? ART : 0)).setAngle(stunned ? -facing * 90 : 0);
+      a.body.setTexture(`keeper-${a.slot}-${a.figure}-${frame}`).setFlipX(facing < 0).setPosition(snap(pos.x), snap(pos.y) - (frame ? ART : 0)).setAngle(stunned ? -facing * 90 : 0);
       const blink = stunned ? Math.floor(now / 80) % 2 === 0 : mine && now < this.me.immuneUntil && Math.floor(now / 120) % 2 === 0;
       if (blink) a.body.setTintFill(hexNum(P.parchment)); else a.body.clearTint();
       a.body.setAlpha(player.connected ? 1 : 0.4);
@@ -672,7 +675,7 @@ export class ArenaScene extends Phaser.Scene {
         o.fillStyle(ready >= 1 ? hexNum(P.lamp) : hexNum(P.brassD), 1).fillRect(bx, by, Math.round(8 * ready) * ART, ART);
         // While carrying: a pointer toward your beacon.
         if (carry > 0) {
-          const [sx, sy] = SHRINES[a.slot % SHRINES.length];
+          const [sx, sy] = SHRINES[s.seatOf(uid) % SHRINES.length];
           const ang = Math.atan2(sy - pos.y, sx - pos.x);
           if (Math.hypot(sx - pos.x, sy - pos.y) > 90) {
             for (let i = 0; i < 3; i++) {
@@ -698,7 +701,7 @@ export class ArenaScene extends Phaser.Scene {
   private drawBeacons(now: number) {
     for (const b of this.beacons) {
       const slot = this.session.slotOf(b.uid);
-      const [x, y] = SHRINES[slot % SHRINES.length];
+      const [x, y] = SHRINES[this.session.seatOf(b.uid) % SHRINES.length];
       const score = this.session.state.score[b.uid] ?? 0;
       if (Math.floor(now / 160 + slot) % 7 !== 0) this.lightAt('light-beacon', x, y - 24, 18);
       b.label.setText(b.uid === this.uid && !this.quiet ? 'YOUR BEACON' : this.nameOf(b.uid));

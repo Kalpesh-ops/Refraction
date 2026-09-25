@@ -2,8 +2,12 @@ import type { ArenaState } from './game/host';
 
 export type RoomStatus = 'lobby' | 'playing' | 'results';
 
-export interface Player { id: string; name: string; slot: number; joinedAt: number; connected: boolean }
-export interface Match { round: number; startsAt: number; endsAt: number }
+/** `slot` is the cloak colour (unique per room); `figure` the silhouette. */
+export interface Player { id: string; name: string; slot: number; figure?: number; joinedAt: number; connected: boolean }
+/** A keeper's chosen look: cloak colour (slot) and silhouette (figure). */
+export interface Look { slot: number; figure: number }
+/** `seats` maps each keeper to a beacon, packed from 0 at the start of the round so beacons sit in fair pairs. */
+export interface Match { round: number; startsAt: number; endsAt: number; seats?: Record<string, number> }
 
 /** Owner-written position sample. `s` is stunned-until (server ms). */
 export interface PosSample { x: number; y: number; a: number; t: number; s: number }

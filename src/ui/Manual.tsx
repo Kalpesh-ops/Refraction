@@ -1,4 +1,5 @@
 import { MIRROR_ICON, SHARD, STONE_ICON, beaconSprite, ghostSprite, keeperSprite } from '../art/sprites';
+import { Digits } from './Digits';
 import { PixelArt } from './Pixel';
 
 const STEPS = [
@@ -15,7 +16,7 @@ const STEPS = [
   {
     art: <PixelArt sprite={ghostSprite(0)} scale={4} />,
     title: 'Mind your echo',
-    body: 'Three seconds after every beam, your echo throws the same beam again from where you stood. A dotted warning line shows where an echo is about to fire.',
+    body: 'Your echo walks your path three seconds behind you and throws every beam again from where you stood. Any other keeper who walks into your echo is caught, so lead chasers through your own trail. A dim echo is harmless.',
   },
   {
     art: <span className="pair"><PixelArt sprite={SHARD} scale={4} /><PixelArt sprite={beaconSprite(0, true)} scale={3} /></span>,
@@ -34,7 +35,7 @@ export function Manual({ compact = false }: { compact?: boolean }) {
     <ol className={`manual ${compact ? 'compact' : ''}`}>
       {STEPS.map((s, i) => (
         <li key={s.title}>
-          <span className="manual-num">{String(i + 1).padStart(2, '0')}</span>
+          <span className="manual-num"><Digits value={String(i + 1).padStart(2, '0')} size={3} /></span>
           <span className="manual-art">{s.art}</span>
           <div>
             <h3>{s.title}</h3>

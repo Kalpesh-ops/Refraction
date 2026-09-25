@@ -27,17 +27,50 @@ const KEEPER_A: Grid = [
   '................',
 ];
 
-const KEEPER_B: Grid = [...KEEPER_A.slice(0, 13), '..kddddddddk....', '....kk..kk......', '................'];
+const LEGS_B = ['..kddddddddk....', '....kk..kk......', '................'];
+
+/** Head and shoulders (rows 0 to 5) for each figure; every figure shares the cloak, legs and lantern. */
+export const FIGURES: Array<{ name: string; head: Grid }> = [
+  { name: 'Hooded', head: KEEPER_A.slice(0, 6) },
+  { name: 'Lamplighter', head: [
+    '................',
+    '...kkkkkkk......',
+    '..kdddddddk.....',
+    '..kbbbbbbbbkk...',
+    '..kddffffefk....',
+    '..kdcffffkk.....',
+  ] },
+  { name: 'Diver', head: [
+    '....kkkkkk......',
+    '...kbbbbbbk.....',
+    '..kbbbkkkkbk....',
+    '..kbbkgwggkk....',
+    '..kbbkgggkbk....',
+    '..kdbbkkkkk.....',
+  ] },
+  { name: 'Warden', head: [
+    '....kkkkk.......',
+    '....kdddk.......',
+    '....kbbbk.......',
+    '..kkkkkkkkkk....',
+    '...kddffefk.....',
+    '..kdcffffkk.....',
+  ] },
+];
+
+const figureOf = (figure = 0) => FIGURES[((figure % FIGURES.length) + FIGURES.length) % FIGURES.length];
+const keeperGrid = (figure = 0, frame: 0 | 1 = 0): Grid => [...figureOf(figure).head, ...KEEPER_A.slice(6, 13), ...(frame ? LEGS_B : KEEPER_A.slice(13))];
 
 export const keeperColors = (k: Keeper): ColorMap => ({
-  k: P.ink, c: k.cloak, d: k.shade, f: P.skin, e: P.ink, b: P.brass, l: P.lampL,
+  k: P.ink, c: k.cloak, d: k.shade, f: P.skin, e: P.ink, b: P.brass, l: P.lampL, g: P.glass, w: P.glassL,
 });
 
-export const keeperSprite = (slot: number, frame: 0 | 1 = 0): SpriteDef => ({ grid: frame ? KEEPER_B : KEEPER_A, colors: keeperColors(keeperOf(slot)) });
+/** `slot` picks the cloak colour, `figure` the silhouette. */
+export const keeperSprite = (slot: number, frame: 0 | 1 = 0, figure = 0): SpriteDef => ({ grid: keeperGrid(figure, frame), colors: keeperColors(keeperOf(slot)) });
 
 /** The echo: same silhouette, dithered and pale, so it reads as "not really there". */
-export function ghostSprite(slot: number): SpriteDef {
-  const grid = KEEPER_A.map((row, y) => [...row].map((ch, x) => {
+export function ghostSprite(slot: number, figure = 0): SpriteDef {
+  const grid = keeperGrid(figure).map((row, y) => [...row].map((ch, x) => {
     if (ch === '.') return '.';
     if (ch === 'k') return 'g';
     if (ch === 'l') return 'l';

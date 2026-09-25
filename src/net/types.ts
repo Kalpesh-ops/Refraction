@@ -1,5 +1,5 @@
 import type { ArenaState } from '../game/host';
-import type { Hit, Match, PosSample, RoomMeta, RoomStatus, Shot } from '../types';
+import type { Hit, Look, Match, PosSample, RoomMeta, RoomStatus, Shot } from '../types';
 
 export type SessionKind = 'online' | 'practice' | 'demo';
 
@@ -26,6 +26,11 @@ export interface GameSession {
   pushFeed(text: string, slot: number): void;
   flag(name: string): void;
   slotOf(uid: string): number;
+  /** Beacon index for this round. */
+  seatOf(uid: string): number;
+  figureOf(uid: string): number;
+  /** Online lobby only: change colour and figure. */
+  setLook?(look: Look): Promise<void>;
   subscribe(fn: () => void): () => void;
   publishPos(sample: PosSample, force?: boolean): void;
   fire(shot: Omit<Shot, 'o'>): string;
