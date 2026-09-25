@@ -15,6 +15,7 @@ import { Footer, Privacy, Terms } from './ui/Legal';
 import { Controls, Manual } from './ui/Manual';
 import { Digits } from './ui/Digits';
 import { Brand, PixelArt } from './ui/Pixel';
+import { QrCode } from './ui/QrCode';
 import './styles.css';
 
 const NAME_KEY = 'refraction:name';
@@ -317,6 +318,7 @@ function Lobby({ session, leave }: { session: GameSession; leave: () => void }) 
   const present = players.filter((p) => p.connected).length;
   const me = meta.players[session.uid];
   const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const [error, setError] = useState('');
   const link = `${location.origin}/?room=${meta.code}`;
   const copy = async () => {
@@ -336,6 +338,15 @@ function Lobby({ session, leave }: { session: GameSession; leave: () => void }) 
             <p className="kicker">Room code</p>
             <p className="room-code" aria-label={`Room code ${meta.code.split('').join(' ')}`}>{meta.code}</p>
             <button type="button" className="btn primary wide" onClick={copy}>{copied ? 'Link copied' : 'Copy invite link'}</button>
+            <button type="button" className="linkish qr-toggle" aria-expanded={showQr} onClick={() => setShowQr((v) => !v)}>
+              {showQr ? 'Hide the QR code' : 'Show a QR code for phones'}
+            </button>
+            {showQr && (
+              <figure className="qr">
+                <QrCode text={link} label={`QR code for room ${meta.code}`} />
+                <figcaption>Point a phone camera here to join room {meta.code}.</figcaption>
+              </figure>
+            )}
             <p className="fineprint">Send the link to friends. They can join from a phone or a computer, up to six keepers.</p>
           </section>
           <section className="panel">

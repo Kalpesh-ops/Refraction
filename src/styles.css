@@ -188,6 +188,10 @@ input::placeholder { color: var(--stone); font-family: var(--serif); font-style:
 .count { font-size: .9rem; font-weight: 400; color: var(--brass-d); }
 .ticket-stub { background: var(--paper-2); border-style: solid; }
 .room-code { font-family: var(--pixel); font-weight: 700; font-size: clamp(3rem, 8vw, 4.6rem); letter-spacing: .22em; line-height: 1; padding: 12px 0; border-top: 2px dashed var(--ink); border-bottom: 2px dashed var(--ink); text-align: center; }
+.qr-toggle { justify-self: center; font-family: var(--pixel); font-size: .9rem; }
+.qr { margin: 0; display: grid; justify-items: center; gap: 8px; }
+.qr-code { width: min(100%, 220px); height: auto; border: 3px solid var(--ink); image-rendering: pixelated; }
+.qr figcaption { font-size: .9rem; text-align: center; }
 .roster { list-style: none; margin: 0; padding: 0; display: grid; }
 .roster li { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 2px solid var(--rule); }
 .roster li.away { opacity: .5; }
